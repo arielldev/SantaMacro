@@ -197,8 +197,10 @@ class SantaMacro:
         
         self._detection_movement_history: List[Tuple[int, int]] = []
         self._max_movement_history: int = 5
-        self._min_movement_pixels: int = 12
+        self._min_movement_pixels: int = 8  # Reduced from 20 to allow slower-moving Santa
         self._has_attacked_successfully: bool = False
+        self._static_rejection_count: int = 0  # Track consecutive static object rejections
+        self._last_rejected_position: Optional[int] = None  # X position of last rejected static object
 
         self._keyboard_listener = None
         self._running = False
@@ -206,6 +208,18 @@ class SantaMacro:
         self._zoom_performed = False
         self._mouse_down = False
         self._click_started_ts: Optional[float] = None
+        
+        # Hotkey debouncing to prevent phantom keypresses
+        self._last_hotkey_time = {}
+        self._hotkey_debounce_ms = 500  # Minimum 500ms between same hotkey presses
+        
+        # Periodic cleanup to prevent stuck keys
+        self._last_cleanup_frame = 0
+        self._cleanup_interval = 100  # Force cleanup every 100 frames
+        
+        # Periodic cleanup to prevent stuck keys
+        self._last_cleanup_frame = 0
+        self._cleanup_interval = 100  # Force cleanup every 100 frames
 
         self._ema_conf: Optional[float] = None
         self._ema_center: Optional[Tuple[float, float]] = None
@@ -324,7 +338,7 @@ class SantaMacro:
         else:
             self.logger.warning("[YOLO MODEL] No model path configured")
         
-        self.logger.info("[MINIMAL MODE] Santa Lock-on Mode ENABLED (santa.py inspired)")
+        self.logger.info("[MINIMAL MODE] Santa Lock-on Mode ENABLED")
 
     def _setup_logger(self, log_cfg: dict) -> logging.Logger:
         logger = logging.getLogger("SantaMacro")
@@ -369,6 +383,29 @@ class SantaMacro:
             return "Roblox" in title or "roblox" in title.lower()
         except:
             return True
+    
+    def _force_focus_roblox(self) -> bool:
+        """Forcefully focus Roblox window - critical for input to work"""
+        try:
+            # Find Roblox window
+            hwnd = ctypes.windll.user32.FindWindowW(None, "Roblox")
+            if hwnd:
+                # Restore if minimized
+                SW_RESTORE = 9
+                ctypes.windll.user32.ShowWindow(hwnd, SW_RESTORE)
+                
+                # Force foreground
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+                
+                # Extra push - sometimes needed
+                ctypes.windll.user32.BringWindowToTop(hwnd)
+                ctypes.windll.user32.SetActiveWindow(hwnd)
+                
+                return True
+            return False
+        except Exception as e:
+            self.logger.warning(f"[FOCUS] Failed to focus Roblox: {e}")
+            return False
 
     def _compute_roi(self) -> dict:
         left = self.monitor["left"]
@@ -383,6 +420,90 @@ class SantaMacro:
             "height": int(frac["height"] * height),
         }
         return roi
+    
+    def _native_key_release(self, vk_code: int):
+        """Force release a key using Windows SendInput API (most reliable)"""
+        try:
+            # Define INPUT structure
+            PUL = ctypes.POINTER(ctypes.c_ulong)
+            
+            class KeyBdInput(ctypes.Structure):
+                _fields_ = [("wVk", ctypes.c_ushort),
+                           ("wScan", ctypes.c_ushort),
+                           ("dwFlags", ctypes.c_ulong),
+                           ("time", ctypes.c_ulong),
+                           ("dwExtraInfo", PUL)]
+            
+            class HardwareInput(ctypes.Structure):
+                _fields_ = [("uMsg", ctypes.c_ulong),
+                           ("wParamL", ctypes.c_short),
+                           ("wParamH", ctypes.c_ushort)]
+            
+            class MouseInput(ctypes.Structure):
+                _fields_ = [("dx", ctypes.c_long),
+                           ("dy", ctypes.c_long),
+                           ("mouseData", ctypes.c_ulong),
+                           ("dwFlags", ctypes.c_ulong),
+                           ("time", ctypes.c_ulong),
+                           ("dwExtraInfo", PUL)]
+            
+            class Input_I(ctypes.Union):
+                _fields_ = [("ki", KeyBdInput),
+                           ("mi", MouseInput),
+                           ("hi", HardwareInput)]
+            
+            class Input(ctypes.Structure):
+                _fields_ = [("type", ctypes.c_ulong),
+                           ("ii", Input_I)]
+            
+            # Create keyup event
+            extra = ctypes.c_ulong(0)
+            ii_ = Input_I()
+            ii_.ki = KeyBdInput(vk_code, 0, 0x0002, 0, ctypes.pointer(extra))  # 0x0002 = KEYEVENTF_KEYUP
+            x = Input(ctypes.c_ulong(1), ii_)
+            
+            # Send the input
+            ctypes.windll.user32.SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
+            time.sleep(0.01)
+        except Exception as e:
+            self.logger.warning(f"[NATIVE INPUT ERROR] Failed to release VK {vk_code}: {e}")
+    
+    def _force_release_all_arrows(self):
+        """Force release all arrow keys using native Windows API (most reliable)"""
+        try:
+            # Release LEFT and RIGHT arrows using Windows SendInput
+            self._native_key_release(0x25)  # VK_LEFT
+            self._native_key_release(0x27)  # VK_RIGHT
+            
+            # Also try pydirectinput as backup
+            for key in ['left', 'right']:
+                try:
+                    pydirectinput.keyUp(key)
+                except:
+                    pass
+            
+            # Clear our tracking state
+            with self.arrow_lock:
+                self.current_arrow_key = None
+                self.is_holding_arrow = False
+            with self.keys_lock:
+                self.camera_keys_pressed.clear()
+            
+            time.sleep(0.02)
+        except Exception as e:
+            self.logger.warning(f"[CLEANUP ERROR] {e}")
+    
+    def _safe_key_press(self, key: str, action: str = "down"):
+        """Safely press/release a key with cleanup and delays to prevent stuck keys"""
+        try:
+            if action == "down":
+                pydirectinput.keyDown(key)
+                time.sleep(0.01)  # Small delay after keyDown
+            elif action == "up":
+                pydirectinput.keyUp(key)
+                time.sleep(0.01)  # Small delay after keyUp
+        except Exception as e:
+            self.logger.warning(f"[INPUT ERROR] Failed to {action} key '{key}': {e}")
 
     def _load_templates(self, paths: List[str], grayscale: bool):
         loaded = 0
@@ -1566,7 +1687,19 @@ class SantaMacro:
                 name = str(key)
         hk = self.cfg["hotkeys"]
         if isinstance(name, str):
+            # Debounce hotkey presses to prevent phantom triggers
+            current_time = time.time() * 1000  # Convert to milliseconds
+            key_lower = name.lower()
+            last_time = self._last_hotkey_time.get(key_lower, 0)
+            
+            if current_time - last_time < self._hotkey_debounce_ms:
+                self.logger.debug(f"[HOTKEY] Ignoring duplicate key press: {key_lower} (debounce)")
+                return
+            
+            self._last_hotkey_time[key_lower] = current_time
+            
             if name.lower() == hk.get("toggle", "f1").lower():
+                self.logger.info(f"[HOTKEY] Toggle key '{name}' pressed at frame {self._debug_log_counter}")
                 if self._running:
                     self._running = False
                     self._paused = False
@@ -1653,6 +1786,13 @@ class SantaMacro:
         try:
             while self.state != MacroState.SHUTDOWN:
                 start_ts = time.time()
+                
+                # Periodic cleanup to prevent stuck keys every 100 frames
+                if self._debug_log_counter - self._last_cleanup_frame >= self._cleanup_interval:
+                    self._force_release_all_arrows()
+                    self._last_cleanup_frame = self._debug_log_counter
+                    self.logger.info(f"[CLEANUP] Frame {self._debug_log_counter}: Native arrow release")
+                
                 frame_bgr = self._grab_frame(mask_cursor=not (self._click_cycle_phase == "shoot"))
                 frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
 
@@ -1685,17 +1825,24 @@ class SantaMacro:
                         self.logger.info(f"[FRAME {self._debug_log_counter}] search_state={self.search_state}, attack_phase={self.attack_phase}")
                     
                     if self.search_state == "searching_left":
-                        with self.arrow_lock:
-                            if not self.is_holding_arrow or self.current_arrow_key != 'left':
+                        # SIMPLIFIED: Just hold LEFT continuously like GPO Santa
+                        if not self.is_holding_arrow or self.current_arrow_key != 'left':
+                            with self.arrow_lock:
+                                # Release any other arrow first
+                                if self.current_arrow_key and self.current_arrow_key != 'left':
+                                    pydirectinput.keyUp(self.current_arrow_key)
                                 pydirectinput.keyDown('left')
-                                self.logger.info("[SEARCH] Holding LEFT arrow (searching for Santa)")
                                 with self.keys_lock:
+                                    self.camera_keys_pressed.clear()
                                     self.camera_keys_pressed.add('left')
                                 self.is_holding_arrow = True
                                 self.current_arrow_key = 'left'
-                        if self._debug_log_counter % 5 == 0:
-                            self.logger.info(f"[SEARCH ACTIVE] Frame {self._debug_log_counter}: Holding LEFT key")
-                        time.sleep(0.05)
+                                self.logger.info("[SEARCH] Holding LEFT arrow")
+                        
+                        # Log status every 30 frames
+                        if self._debug_log_counter % 30 == 0:
+                            self.logger.info(f"[SEARCH] LEFT held (frame {self._debug_log_counter})")
+                        time.sleep(0.01)
                     
                     best_santa = None
                     
@@ -1729,16 +1876,36 @@ class SantaMacro:
                                         
                                         min_santa_width = 40
                                         min_santa_height = 25
+                                        max_santa_height = 200  # Prevent detecting tall trees
+                                        
+                                        # Reject if too small
                                         if candidate_w < min_santa_width or candidate_h < min_santa_height:
                                             if self._debug_log_counter % 10 == 0:
                                                 self.logger.info(f"[YOLO REJECT] Too small: {candidate_w}x{candidate_h} (min {min_santa_width}x{min_santa_height}) conf={confidence:.2f}")
+                                            continue
+                                        
+                                        # Reject if too tall (likely a tree or decoration)
+                                        if candidate_h > max_santa_height:
+                                            if self._debug_log_counter % 10 == 0:
+                                                self.logger.info(f"[YOLO REJECT] Too tall: {candidate_h}px (max {max_santa_height}px) - likely tree/decoration, conf={confidence:.2f}")
+                                            continue
+                                        
+                                        # Aspect ratio check: Santa should be roughly square or wider than tall
+                                        # Trees are much taller than wide (aspect ratio > 3.0)
+                                        # Only apply strict check during idle phase, be lenient during tracking/combat
+                                        aspect_ratio = candidate_h / candidate_w
+                                        max_aspect_ratio = 3.0 if self.attack_phase != "idle" else 2.5  # More lenient during combat
+                                        if aspect_ratio > max_aspect_ratio:
+                                            if self._debug_log_counter % 10 == 0:
+                                                self.logger.info(f"[YOLO REJECT] Too tall/narrow (aspect {aspect_ratio:.2f} > {max_aspect_ratio}) - likely tree, conf={confidence:.2f}")
                                             continue
                                         
                                         is_valid_candidate = True
                                         frames_since_search = self._debug_log_counter - getattr(self, '_search_exit_frame', -999)
                                         skip_validation = frames_since_search < 3
                                         
-                                        if self._last_santa_center is not None and self.search_state == "idle" and not skip_validation:
+                                        # Skip position jump validation during attack phases - Santa moves unpredictably during combat
+                                        if self._last_santa_center is not None and self.search_state == "idle" and not skip_validation and self.attack_phase == "idle":
                                             prev_cx, prev_cy = self._last_santa_center
                                             jump_distance = abs(candidate_cx - prev_cx)
                                             max_reasonable_jump = 250
@@ -1753,7 +1920,8 @@ class SantaMacro:
                                             if len(self._detection_movement_history) > self._max_movement_history:
                                                 self._detection_movement_history.pop(0)
                                             
-                                            if len(self._detection_movement_history) >= 8:
+                                            # Only check movement after collecting enough frames (reduced to 5 for faster response)
+                                            if len(self._detection_movement_history) >= 5:
                                                 x_positions = [pos[0] for pos in self._detection_movement_history]
                                                 y_positions = [pos[1] for pos in self._detection_movement_history]
                                                 x_range = max(x_positions) - min(x_positions)
@@ -1762,7 +1930,7 @@ class SantaMacro:
                                                 
                                                 if total_movement < self._min_movement_pixels:
                                                     is_valid_candidate = False
-                                                    self.logger.info(f"[YOLO REJECT] Static object detected (moved only {total_movement}px over 8 frames) - likely tree/decoration at X={candidate_cx}")
+                                                    self.logger.info(f"[YOLO REJECT] Static object detected (moved only {total_movement}px over 5 frames) - likely tree/decoration at X={candidate_cx}")
                                                     self._consecutive_detections = 0
                                                     self._detection_movement_history.clear()
                                         
@@ -1772,6 +1940,8 @@ class SantaMacro:
                                                     'box': (int(x1), int(y1), int(x2), int(y2)),
                                                     'confidence': confidence
                                                 }
+                                                if self._debug_log_counter % 10 == 0:
+                                                    self.logger.info(f"[YOLO ACCEPT] Santa {candidate_w}x{candidate_h}, aspect={aspect_ratio:.2f}, conf={confidence:.2f}, phase={self.attack_phase}")
                         except Exception as e:
                             if self._debug_log_counter % 50 == 0:
                                 self.logger.error(f"[YOLO ERROR] {e}")
@@ -1804,19 +1974,53 @@ class SantaMacro:
                     if self.attack_phase == "cooldown" and best_santa:
                         phase_elapsed = current_time - self.attack_phase_start
                         if phase_elapsed >= self.megapow_cooldown_duration:
-                            with self.arrow_lock:
-                                if self.current_arrow_key is not None:
-                                    pydirectinput.keyUp(self.current_arrow_key)
-                                    with self.keys_lock:
-                                        self.camera_keys_pressed.discard(self.current_arrow_key)
-                                    self.current_arrow_key = None
-                                    self.is_holding_arrow = False
-                            # Reset consecutive detections for the next attack cycle
-                            self._consecutive_detections = 0
-                            self.attack_phase = "load"
-                            self.attack_phase_start = current_time
-                            self.attack_committed = False
-                            self.logger.info("[MEGAPOW] Cooldown complete -> Stage 1: LOAD started (1.0s)")
+                            # CRITICAL: Before restarting attack, validate Santa's position
+                            # If Santa is too far out of bounds, abort and search instead of looping forever
+                            x1, y1, x2, y2 = best_santa['box']
+                            w = x2 - x1
+                            santa_cx = x1 + w // 2
+                            
+                            # Check if Santa is within reasonable bounds for continuing attack
+                            # Use 20-80% range (vs 25-75% safe zone for starting attacks)
+                            # This gives some margin but prevents attacking way out of bounds targets
+                            abort_zone_left = int(self.roi["width"] * 0.20)
+                            abort_zone_right = int(self.roi["width"] * 0.80)
+                            
+                            if santa_cx < abort_zone_left or santa_cx > abort_zone_right:
+                                # Santa is way out of bounds - this might be a tree or Santa escaped
+                                # Abort the attack loop and search for proper target
+                                self.logger.info(f"[COOLDOWN END] Santa at X={santa_cx} outside acceptable range ({abort_zone_left}-{abort_zone_right}) - ABORTING attack loop")
+                                self.attack_phase = "idle"
+                                self._consecutive_detections = 0
+                                self._detection_movement_history.clear()
+                                self._has_attacked_successfully = True  # Preserve attack state
+                                
+                                with self.arrow_lock:
+                                    if self.current_arrow_key is not None:
+                                        pydirectinput.keyUp(self.current_arrow_key)
+                                        with self.keys_lock:
+                                            self.camera_keys_pressed.discard(self.current_arrow_key)
+                                        self.current_arrow_key = None
+                                        self.is_holding_arrow = False
+                                
+                                # Force search to reposition camera
+                                self.search_state = "searching_left"
+                                self.logger.info("[COOLDOWN END] Forcing search to find better target position")
+                            else:
+                                # Santa is in acceptable position, continue attack cycle
+                                with self.arrow_lock:
+                                    if self.current_arrow_key is not None:
+                                        pydirectinput.keyUp(self.current_arrow_key)
+                                        with self.keys_lock:
+                                            self.camera_keys_pressed.discard(self.current_arrow_key)
+                                        self.current_arrow_key = None
+                                        self.is_holding_arrow = False
+                                # Reset consecutive detections for the next attack cycle
+                                self._consecutive_detections = 0
+                                self.attack_phase = "load"
+                                self.attack_phase_start = current_time
+                                self.attack_committed = False
+                                self.logger.info(f"[MEGAPOW] Cooldown complete (Santa at X={santa_cx}) -> Stage 1: LOAD started (1.0s)")
                     
                     if best_santa:
                         x1, y1, x2, y2 = best_santa['box']
@@ -1879,6 +2083,16 @@ class SantaMacro:
                             self.logger.info(f"[SEARCH] Santa found! Stopping search, switching to tracking")
                             self.search_state = "idle"
                             self._search_exit_frame = self._debug_log_counter
+                            
+                            # CRITICAL: Clear movement history after search stops
+                            # During camera pan, static trees appear to "move" - need fresh data with camera frozen
+                            self._detection_movement_history.clear()
+                            self._consecutive_detections = 0
+                            self.logger.info(f"[MOVEMENT RESET] Cleared history - validating fresh movement with camera stopped")
+                        
+                        # If Santa detected immediately on startup (within first 3 frames), abort search
+                        if self._debug_log_counter <= 3 and self.search_state == "idle":
+                            self.logger.info(f"[STARTUP] Santa detected immediately (frame {self._debug_log_counter}) - skipping search phase")
                         
                         if santa_cx < roi_center_x:
                             self.last_santa_side = "left"
@@ -1890,27 +2104,97 @@ class SantaMacro:
                             self.logger.info(f"[CAMERA DEBUG] {phase_status} Santa ROI X={santa_cx}, Optimal={optimal_position}, Offset={offset_x:.0f}, Threshold={move_threshold:.0f}")
                         
                         
-                        # CRITICAL: DO NOT press arrow keys during LOAD or FIRE - it cancels the attack in Roblox!
+                        # Camera repositioning during attack (inspired by GPO Santa.py)
+                        # If Santa drifts too far left/right during FIRE, gently adjust camera to keep them centered
                         if self.attack_phase in ["load", "fire"]:
-                            # Make sure ALL arrow keys are released during attack
+                            # Check if Santa is in the danger zone (too far left or right)
+                            reposition_threshold_left = int(self.roi["width"] * 0.20)  # Left 20%
+                            reposition_threshold_right = int(self.roi["width"] * 0.80)  # Right 80%
+                            
                             with self.arrow_lock:
-                                if self.current_arrow_key is not None:
-                                    key_to_release = self.current_arrow_key
-                                    pydirectinput.keyUp(key_to_release)
-                                    with self.keys_lock:
-                                        self.camera_keys_pressed.discard(key_to_release)
-                                    self.logger.info(f"[CAMERA] Released {key_to_release.upper()} during {self.attack_phase.upper()} - NO MOVEMENT ALLOWED")
-                                    self.current_arrow_key = None
-                                    self.is_holding_arrow = False
+                                if santa_cx < reposition_threshold_left:
+                                    # Santa too far left - move camera LEFT to recenter
+                                    if self.current_arrow_key != 'left':
+                                        if self.current_arrow_key:
+                                            pydirectinput.keyUp(self.current_arrow_key)
+                                            with self.keys_lock:
+                                                self.camera_keys_pressed.discard(self.current_arrow_key)
+                                        pydirectinput.keyDown('left')
+                                        with self.keys_lock:
+                                            self.camera_keys_pressed.add('left')
+                                        self.current_arrow_key = 'left'
+                                        self.is_holding_arrow = True
+                                        if self._debug_log_counter % 10 == 0:
+                                            self.logger.info(f"[{self.attack_phase.upper()}] Santa at X={santa_cx} too far LEFT - repositioning camera")
+                                elif santa_cx > reposition_threshold_right:
+                                    # Santa too far right - move camera RIGHT to recenter
+                                    if self.current_arrow_key != 'right':
+                                        if self.current_arrow_key:
+                                            pydirectinput.keyUp(self.current_arrow_key)
+                                            with self.keys_lock:
+                                                self.camera_keys_pressed.discard(self.current_arrow_key)
+                                        pydirectinput.keyDown('right')
+                                        with self.keys_lock:
+                                            self.camera_keys_pressed.add('right')
+                                        self.current_arrow_key = 'right'
+                                        self.is_holding_arrow = True
+                                        if self._debug_log_counter % 10 == 0:
+                                            self.logger.info(f"[{self.attack_phase.upper()}] Santa at X={santa_cx} too far RIGHT - repositioning camera")
+                                else:
+                                    # Santa is centered enough - release arrow keys
+                                    if self.current_arrow_key is not None:
+                                        key_to_release = self.current_arrow_key
+                                        pydirectinput.keyUp(key_to_release)
+                                        with self.keys_lock:
+                                            self.camera_keys_pressed.discard(key_to_release)
+                                        self.current_arrow_key = None
+                                        self.is_holding_arrow = False
                         
                         elif self.attack_phase == "cooldown":
+                            # During cooldown, TRACK Santa with camera to keep them on screen
+                            # Determine which direction Santa is moving
+                            move_threshold = self.roi["width"] * 0.20  # More aggressive tracking during cooldown
+                            optimal_center = self.roi["width"] // 2
+                            offset_x = santa_cx - optimal_center
+                            
+                            should_move_left = offset_x < -move_threshold
+                            should_move_right = offset_x > move_threshold
+                            
                             with self.arrow_lock:
-                                if self.current_arrow_key is not None:
-                                    pydirectinput.keyUp(self.current_arrow_key)
-                                    with self.keys_lock:
-                                        self.camera_keys_pressed.discard(self.current_arrow_key)
-                                    self.current_arrow_key = None
-                                    self.is_holding_arrow = False
+                                if should_move_left:
+                                    if self.current_arrow_key != 'left':
+                                        if self.current_arrow_key:
+                                            pydirectinput.keyUp(self.current_arrow_key)
+                                            with self.keys_lock:
+                                                self.camera_keys_pressed.discard(self.current_arrow_key)
+                                        pydirectinput.keyDown('left')
+                                        with self.keys_lock:
+                                            self.camera_keys_pressed.add('left')
+                                        self.current_arrow_key = 'left'
+                                        self.is_holding_arrow = True
+                                        if self._debug_log_counter % 10 == 0:
+                                            self.logger.info(f"[COOLDOWN] Following Santa LEFT (offset={offset_x:.0f})")
+                                elif should_move_right:
+                                    if self.current_arrow_key != 'right':
+                                        if self.current_arrow_key:
+                                            pydirectinput.keyUp(self.current_arrow_key)
+                                            with self.keys_lock:
+                                                self.camera_keys_pressed.discard(self.current_arrow_key)
+                                        pydirectinput.keyDown('right')
+                                        with self.keys_lock:
+                                            self.camera_keys_pressed.add('right')
+                                        self.current_arrow_key = 'right'
+                                        self.is_holding_arrow = True
+                                        if self._debug_log_counter % 10 == 0:
+                                            self.logger.info(f"[COOLDOWN] Following Santa RIGHT (offset={offset_x:.0f})")
+                                else:
+                                    # Santa is centered enough, stop moving
+                                    if self.current_arrow_key:
+                                        pydirectinput.keyUp(self.current_arrow_key)
+                                        with self.keys_lock:
+                                            self.camera_keys_pressed.discard(self.current_arrow_key)
+                                        self.current_arrow_key = None
+                                        self.is_holding_arrow = False
                         
                         self._last_detection_frame = self._debug_log_counter
                         self._consecutive_detections += 1
@@ -1921,20 +2205,40 @@ class SantaMacro:
                             self.logger.info(f"[DETECTION STATE] consecutive={self._consecutive_detections}, attack_phase={self.attack_phase}, has_attacked={self._has_attacked_successfully}")
                         
                         can_start_attack = False
-                        # If already attacked successfully: need fewer detections but still validate movement
-                        required_detections = 3 if self._has_attacked_successfully else 5
-                        required_movement_frames = 3 if not self._has_attacked_successfully else 5
+                        # Reduce requirements for faster attack initiation
+                        required_detections = 3  # Same for first attack and subsequent attacks
+                        required_movement_frames = 3  # Reduced to 3 frames minimum
                         
                         if self.attack_phase == "idle" and self._consecutive_detections >= required_detections:
-                            # ALWAYS check movement - filter out static objects (trees/decorations)
+                            # Check movement - filter out static objects (trees/decorations)
                             if len(self._detection_movement_history) >= required_movement_frames:
                                 x_positions = [pos[0] for pos in self._detection_movement_history]
                                 total_movement = max(x_positions) - min(x_positions)
                                 if total_movement < self._min_movement_pixels:
-                                    self.logger.info(f"[ATTACK BLOCKED] Object static (moved {total_movement}px) - not Santa, resetting")
+                                    current_x = x_positions[-1]
+                                    
+                                    # Track rejections at same position
+                                    if self._last_rejected_position is not None and abs(current_x - self._last_rejected_position) < 50:
+                                        self._static_rejection_count += 1
+                                    else:
+                                        self._static_rejection_count = 1
+                                    
+                                    self._last_rejected_position = current_x
+                                    self.logger.info(f"[ATTACK BLOCKED] Object static (moved {total_movement}px) at X={current_x} - rejection #{self._static_rejection_count}")
+                                    
+                                    # After 3 rejections at same spot, force camera to search elsewhere
+                                    if self._static_rejection_count >= 3:
+                                        self.logger.info(f"[STATIC TREE DETECTED] Same static object rejected 3 times - forcing camera search")
+                                        self.search_state = "searching_left"
+                                        self._static_rejection_count = 0
+                                        self._last_rejected_position = None
+                                    
                                     self._consecutive_detections = 0
                                     self._detection_movement_history.clear()
                                 else:
+                                    # Valid movement detected - reset static rejection counter
+                                    self._static_rejection_count = 0
+                                    self._last_rejected_position = None
                                     can_start_attack = True
                                     if self._has_attacked_successfully:
                                         self.logger.info(f"[ATTACK] Santa validated - moved {total_movement}px, restarting attack")
@@ -1979,25 +2283,23 @@ class SantaMacro:
                                         self.is_holding_arrow = True
                         
                         if can_start_attack:
+                            # CRITICAL: Restore Roblox focus before attack
+                            # Mouse clicks and long operations can steal focus, breaking all inputs
                             if not self._is_roblox_focused():
-                                self.logger.warning("[ATTACK BLOCKED] Roblox not focused - click game window!")
-                                self._consecutive_detections = 0
-                            else:
-                                self.logger.info(f"[ATTACK START] Santa detected {self._consecutive_detections} times, starting attack now")
-                                with self.arrow_lock:
-                                    if self.current_arrow_key is not None:
-                                        key_to_release = self.current_arrow_key
-                                        pydirectinput.keyUp(key_to_release)
-                                        with self.keys_lock:
-                                            self.camera_keys_pressed.discard(key_to_release)
-                                        self.logger.info(f"[CAMERA] Released {key_to_release.upper()} - freezing for attack")
-                                        self.current_arrow_key = None
-                                        self.is_holding_arrow = False
-                                
-                                self.attack_phase = "load"
-                                self.attack_phase_start = current_time
-                                self.attack_committed = False
-                                self.logger.info(f"[MEGAPOW] Stage 1: LOAD started (1.0s) - Santa detected!")
+                                self.logger.info("[FOCUS] Restoring Roblox focus before attack...")
+                                self._force_focus_roblox()
+                                time.sleep(0.05)  # Brief delay for focus to take effect
+                            
+                            self.logger.info(f"[ATTACK START] Santa detected {self._consecutive_detections} times, starting attack now")
+                            
+                            # CRITICAL: Force-release all arrow keys using native Windows API
+                            self._force_release_all_arrows()
+                            self.logger.info(f"[CAMERA] Force-released all arrows - freezing for attack")
+                            
+                            self.attack_phase = "load"
+                            self.attack_phase_start = current_time
+                            self.attack_committed = False
+                            self.logger.info(f"[MEGAPOW] Stage 1: LOAD started (1.0s) - Santa detected!")
                         elif self.attack_phase == "cooldown":
                             phase_elapsed = current_time - self.attack_phase_start
                             
@@ -2145,13 +2447,9 @@ class SantaMacro:
                                     self.logger.info(f"[LOOT] Spamming E ({time_since_kill:.1f}s/{self.e_spam_duration}s)")
                             
                             if self.search_state == "idle":
-                                with self.arrow_lock:
-                                    if self.current_arrow_key:
-                                        pydirectinput.keyUp(self.current_arrow_key)
-                                        with self.keys_lock:
-                                            self.camera_keys_pressed.discard(self.current_arrow_key)
-                                        self.current_arrow_key = None
-                                self.is_holding_arrow = False
+                                # CRITICAL: Force-release ALL arrows before starting search
+                                self._force_release_all_arrows()
+                                self.logger.info("[SEARCH] Force-released all arrows before search")
                                 
                                 if self.attack_phase == "cooldown":
                                     self.attack_phase = "idle"
@@ -2161,9 +2459,20 @@ class SantaMacro:
                                 self._last_santa_center = None
                                 self._detection_movement_history.clear()
                                 
+                                # CRITICAL: Restore Roblox focus before search
+                                # Camera movement requires focus to work
+                                if not self._is_roblox_focused():
+                                    self.logger.info("[FOCUS] Restoring Roblox focus for search...")
+                                    self._force_focus_roblox()
+                                    time.sleep(0.05)  # Brief delay for focus to take effect
+                                
                                 # Always search left when Santa is lost
                                 self.search_state = "searching_left"
                                 self.logger.info(f"[SEARCH] Santa lost, searching left...")
+                                
+                                # CRITICAL: Force-release all arrows before starting search
+                                self._force_release_all_arrows()
+                                self.logger.info(f"[SEARCH] Force-released all arrows - ready for clean search")
                             
                             self._predicted_position = None
                             self._position_history.clear()
