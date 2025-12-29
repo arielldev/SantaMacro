@@ -169,16 +169,101 @@ if !FAILED_COUNT! GTR 0 (
 )
 
 echo.
-echo [Verification] Testing core imports...
-python -c "import numpy, cv2, ultralytics, pydirectinput, keyboard, mss; print('✓ Core modules verified')" 2>nul
+echo [Verification] Testing package imports...
+echo Checking core modules...
+
+set VERIFY_FAILED=0
+
+python -c "import mss" 2>nul
 if errorlevel 1 (
-    echo WARNING: Some core modules may not be properly installed
-    echo The program may still work, but some features might be limited
+    echo ✗ mss import failed
+    set VERIFY_FAILED=1
+) else (
+    echo ✓ mss working
 )
 
-python -c "from PySide6.QtWidgets import QApplication; print('✓ UI modules verified')" 2>nul
+python -c "import numpy" 2>nul
 if errorlevel 1 (
-    echo WARNING: PySide6 UI modules may have issues
+    echo ✗ numpy import failed
+    set VERIFY_FAILED=1
+) else (
+    echo ✓ numpy working
+)
+
+python -c "import cv2" 2>nul
+if errorlevel 1 (
+    echo ✗ opencv-python import failed
+    set VERIFY_FAILED=1
+) else (
+    echo ✓ opencv-python working
+)
+
+python -c "import PIL" 2>nul
+if errorlevel 1 (
+    echo ✗ Pillow import failed
+    set VERIFY_FAILED=1
+) else (
+    echo ✓ Pillow working
+)
+
+python -c "import pyautogui" 2>nul
+if errorlevel 1 (
+    echo ✗ pyautogui import failed
+    set VERIFY_FAILED=1
+) else (
+    echo ✓ pyautogui working
+)
+
+python -c "import pydirectinput" 2>nul
+if errorlevel 1 (
+    echo ✗ pydirectinput import failed
+    set VERIFY_FAILED=1
+) else (
+    echo ✓ pydirectinput working
+)
+
+python -c "import pynput" 2>nul
+if errorlevel 1 (
+    echo ✗ pynput import failed
+    set VERIFY_FAILED=1
+) else (
+    echo ✓ pynput working
+)
+
+python -c "from PySide6.QtWidgets import QApplication" 2>nul
+if errorlevel 1 (
+    echo ✗ PySide6 import failed
+    set VERIFY_FAILED=1
+) else (
+    echo ✓ PySide6 working
+)
+
+python -c "from ultralytics import YOLO" 2>nul
+if errorlevel 1 (
+    echo ✗ ultralytics import failed
+    set VERIFY_FAILED=1
+) else (
+    echo ✓ ultralytics working
+)
+
+echo.
+if !VERIFY_FAILED! EQU 1 (
+    echo ========================================
+    echo   ⚠️ INSTALLATION INCOMPLETE!
+    echo ========================================
+    echo.
+    echo Some packages failed to install or import.
+    echo SantaMacro will NOT work properly!
+    echo.
+    echo Please:
+    echo 1. Run install.bat again as Administrator
+    echo 2. Check you're using Python 3.12 or 3.13
+    echo 3. Ask for help in Discord if issues persist
+    echo.
+) else (
+    echo ========================================
+    echo   ✓ ALL PACKAGES VERIFIED!
+    echo ========================================
 )
 
 echo.
