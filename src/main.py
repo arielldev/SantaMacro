@@ -15,7 +15,6 @@ def main():
 
     macro = SantaMacro(args.config)
 
-    # Apply CLI overrides
     if args.mode:
         macro.det_mode = args.mode
         macro.logger.info("CLI override: detection mode -> %s", args.mode)

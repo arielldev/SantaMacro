@@ -20,6 +20,49 @@ if errorlevel 1 (
 for /f "tokens=2" %%i in ('python --version 2^>^&1') do set PYTHON_VERSION=%%i
 echo ✓ Python %PYTHON_VERSION% found
 
+for /f "tokens=1,2 delims=." %%a in ("%PYTHON_VERSION%") do (
+    set PYTHON_MAJOR=%%a
+    set PYTHON_MINOR=%%b
+)
+
+if %PYTHON_MAJOR% GTR 3 (
+    echo.
+    echo ========================================
+    echo   ERROR: Unsupported Python Version!
+    echo ========================================
+    echo.
+    echo You are using Python %PYTHON_VERSION%
+    echo.
+    echo SantaMacro requires Python 3.12 or 3.13
+    echo Python 3.14+ is NOT supported due to package compatibility
+    echo.
+    echo Please install Python 3.13 or 3.12:
+    echo   • Python 3.13: https://www.python.org/ftp/python/3.13.0/python-3.13.0-amd64.exe
+    echo   • Python 3.12: https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe
+    echo.
+    pause
+    exit /b 1
+)
+
+if %PYTHON_MAJOR% EQU 3 if %PYTHON_MINOR% GEQ 14 (
+    echo.
+    echo ========================================
+    echo   ERROR: Unsupported Python Version!
+    echo ========================================
+    echo.
+    echo You are using Python %PYTHON_VERSION%
+    echo.
+    echo SantaMacro requires Python 3.12 or 3.13
+    echo Python 3.14+ is NOT supported due to package compatibility
+    echo.
+    echo Please install Python 3.13 or 3.12:
+    echo   • Python 3.13: https://www.python.org/ftp/python/3.13.0/python-3.13.0-amd64.exe
+    echo   • Python 3.12: https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe
+    echo.
+    pause
+    exit /b 1
+)
+
 echo.
 echo [2/5] Creating virtual environment...
 if exist ".venv" (
