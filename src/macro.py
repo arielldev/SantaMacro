@@ -20,41 +20,39 @@ from ctypes import wintypes
 from overlay_qt import OverlayQt
 import glob
 
-# Windows Virtual Key Codes for arrow keys
 VK_LEFT = 0x25
 VK_RIGHT = 0x27
 
-# Keyboard event flags
 KEYEVENTF_KEYDOWN = 0x0000
 KEYEVENTF_KEYUP = 0x0002
 
 
 class MacroState:
     IDLE = "idle"
-    LEARNING = "learning"  # New: 10-second learning phase
+    LEARNING = "learning"
     DETECTING = "detecting"
     CLICKING = "clicking"
     LOST = "lost"
     PAUSED = "paused"
     SHUTDOWN = "shutdown"
-    CAMERA_TRACKING = "camera_tracking"  # New: Following Santa with camera
+    CAMERA_TRACKING = "camera_tracking"
 
 
 @dataclass
 class DetectionResult:
-    bbox: Optional[Tuple[int, int, int, int]]  # x, y, w, h in absolute screen coords
+    bbox: Optional[Tuple[int, int, int, int]]
     confidence: float
-    color_score: float = 0.0  # Red color intensity for Santa
+    color_score: float = 0.0
     
     
 @dataclass
 class SantaProfile:
     """Learned characteristics of Santa during learning phase"""
-    size_min: int = 0  # Minimum width/height
-    size_max: int = 9999  # Maximum width/height
-    avg_speed: float = 0.0  # Average pixels per second
-    color_signature: Optional[np.ndarray] = None  # HSV color histogram
-    movement_history: List[Tuple[float, Tuple[int, int]]] = None  # (timestamp, center) pairs
+    size_min: int = 0
+    size_max: int = 9999
+    avg_speed: float = 0.0
+    color_signature: Optional[np.ndarray] = None
+    movement_history: List[Tuple[float, Tuple[int, int]]] = None
     
     def __post_init__(self):
         if self.movement_history is None:
@@ -66,7 +64,7 @@ class SantaMacro:
         with open(config_path, "r", encoding="utf-8") as f:
             self.cfg = json.load(f)
 
-        self.logger = self._setup_logger(self.cfg["logging"])  
+        self.logger = self._setup_logger(self.cfg["logging"])
         self.state = MacroState.IDLE
         self.last_state = self.state
 
@@ -83,44 +81,38 @@ class SantaMacro:
         self.det_mode: str = self.cfg["detection"].get("mode", "template").lower()
         self.method = getattr(cv2, self.cfg["detection"].get("method", "TM_CCOEFF_NORMED"))
         self.scales: List[float] = self.cfg["detection"].get("scales", [0.9, 1.0, 1.1])
-        self.threshold: float = float(self.cfg["detection"].get("threshold", 0.20))  # Lowered to catch more detections
+        self.threshold: float = float(self.cfg["detection"].get("threshold", 0.20))
         self.ema_alpha: float = float(self.cfg["detection"].get("ema_alpha", 0.25))
         
-        # Detection smoothing - keep attacking even if we lose Santa for a few frames
-        self._last_detection_frame = -1000  # Initialize far in past so grace doesn't trigger at start
-        self._detection_grace_frames = 25  # Keep lock for 25 frames (~1.25 seconds) to allow camera positioning
-        self._predicted_position = None  # Predicted Santa position for smoothing
-        self._position_history = []  # Track last 5 positions for velocity prediction
+        self._last_detection_frame = -1000
+        self._detection_grace_frames = 25
+        self._predicted_position = None
+        self._position_history = []
         self._max_position_history = 5
-        self._consecutive_detections = 0  # Count consecutive frames with detection
-        self._required_detections_to_start = 3  # Require 3 consecutive detections before starting attack
+        self._consecutive_detections = 0
+        self._required_detections_to_start = 3
         
-        # Static Santa timeout - detect false positives
-        self._static_santa_position = None  # Last known Santa position
-        self._static_santa_start_time = None  # When Santa first appeared at this position
-        self._static_santa_timeout = 15.0  # If Santa stays still for 15s, it's a false positive
-        self._static_position_threshold = 100  # Consider "same position" if within 100px
-        self._doing_recovery_search = False  # Flag for recovery search mode
-        self._recovery_search_start = None  # When recovery search started
-        self._recovery_search_duration = 1.5  # Do a 1.5s search loop
+        self._static_santa_position = None
+        self._static_santa_start_time = None
+        self._static_santa_timeout = 15.0
+        self._static_position_threshold = 100
+        self._doing_recovery_search = False
+        self._recovery_search_start = None
+        self._recovery_search_duration = 1.5
         
-        # Attack mode system with 3 stages: LOAD -> FIRE -> COOLDOWN
-        self.attack_mode = "megapow"  # Current attack mode (default: megapow)
-        self.attack_phase = "idle"  # Attack phases: "idle", "load", "fire", "cooldown"
-        self.attack_phase_start = 0.0  # Timestamp when current phase started
-        self.attack_committed = False  # True if we passed load stage (must complete cooldown)
+        self.attack_mode = "megapow"
+        self.attack_phase = "idle"
+        self.attack_phase_start = 0.0
+        self.attack_committed = False
         
-        # Megapow attack sequence: 1s load, 5s fire, 5.2s cooldown
         self.megapow_load_duration = 0.5
         self.megapow_fire_duration = 5.0
         self.megapow_cooldown_duration = 5.2
         
-        # Cursor smoothing with exponential moving average
         self._smoothed_cursor_pos = None
-        self._cursor_smooth_alpha = 0.4  # Higher = more responsive, lower = smoother
+        self._cursor_smooth_alpha = 0.4
         self.motion_cfg = self.cfg["detection"].get("motion", {})
 
-        # Smart tracking configuration
         self.learning_duration: float = float(self.cfg.get("smart_tracking", {}).get("learning_duration_seconds", 10.0))
         self.lock_on_enabled: bool = bool(self.cfg.get("smart_tracking", {}).get("enabled", True))
         self.min_santa_size: int = int(self.cfg.get("smart_tracking", {}).get("min_santa_size_px", 25))
@@ -129,7 +121,6 @@ class SantaMacro:
         self.position_jump_threshold: int = int(self.cfg.get("smart_tracking", {}).get("max_position_jump_px", 150))
         self.color_similarity_threshold: float = float(self.cfg.get("smart_tracking", {}).get("color_similarity_threshold", 0.6))
         
-        # Camera control configuration
         self.camera_control_enabled: bool = bool(self.cfg.get("camera_control", {}).get("enabled", True))
         self.camera_left_edge_threshold: int = int(self.cfg.get("camera_control", {}).get("left_edge_threshold_px", 100))
         self.camera_drag_speed: float = float(self.cfg.get("camera_control", {}).get("drag_speed", 0.3))
@@ -166,13 +157,11 @@ class SantaMacro:
         self.click_min_move_speed = float(self.cfg.get("clicks", {}).get("min_movement_px_per_sec", 3))
         self.click_skip_movement_validation = self.cfg.get("clicks", {}).get("skip_movement_validation", False)
         self.click_always_spam = self.cfg.get("clicks", {}).get("always_click_during_shoot", False)
-        # Shoot-phase tuning from config
         self.shoot_accept_conf = float(self.cfg.get("clicks", {}).get("shoot_accept_conf", 0.10))
         self.prefer_color_during_shoot = bool(self.cfg.get("clicks", {}).get("prefer_color_during_shoot", True))
         self.shoot_ignore_radius_px = int(self.cfg.get("clicks", {}).get("shoot_ignore_radius_px", 180))
         self.require_foreground = bool(self.cfg["safety"].get("require_foreground", False))
 
-        # Learning mode
         self.learning_enabled = bool(self.cfg.get("learning", {}).get("enabled", False))
         self.learning_auto_adjust = bool(self.cfg.get("learning", {}).get("auto_adjust_threshold", True))
         self.learning_log = bool(self.cfg.get("learning", {}).get("log_detections", True))
@@ -182,16 +171,15 @@ class SantaMacro:
             os.makedirs(self.learning_sample_dir, exist_ok=True)
         self._learning_detections = []
 
-        # Smart tracking state
         self._learning_start_ts: Optional[float] = None
         self._santa_profile: SantaProfile = SantaProfile()
-        self._learning_samples: List[Tuple[float, Tuple[int, int, int, int], np.ndarray]] = []  # (ts, bbox, frame)
+        self._learning_samples: List[Tuple[float, Tuple[int, int, int, int], np.ndarray]] = []
         self._learning_first_bbox: Optional[Tuple[int, int, int, int]] = None
         self._learning_stable_count: int = 0
         self._learning_lost_count: int = 0
-        self._learning_continuous_start: Optional[float] = None  # For continuous stable tracking
+        self._learning_continuous_start: Optional[float] = None
         self._learning_last_sample_ts: Optional[float] = None
-        self._postlock_consecutive_valid: int = 0  # For post-lock shooting gating
+        self._postlock_consecutive_valid: int = 0
         self._postlock_required_valid: int = 5
         self._locked_santa: bool = False
         self._last_santa_center: Optional[Tuple[int, int]] = None
@@ -201,70 +189,63 @@ class SantaMacro:
         self._camera_drag_active: bool = False
         self._camera_drag_start_ts: Optional[float] = None
         self._right_mouse_down: bool = False
-        self._debug_log_counter: int = 0  # To throttle debug logs
+        self._debug_log_counter: int = 0
         
-        # Static object filtering (avoid detecting trees, decorations, etc.)
-        self._detection_movement_history: List[Tuple[int, int]] = []  # Last N positions
-        self._max_movement_history: int = 5  # Track last 5 positions (faster check)
-        self._min_movement_pixels: int = 20  # Must move at least 20 pixels across 5 frames
+        self._detection_movement_history: List[Tuple[int, int]] = []
+        self._max_movement_history: int = 5
+        self._min_movement_pixels: int = 20
 
         self._keyboard_listener = None
         self._running = False
         self._paused = False
-        self._zoom_performed = False  # Track if initial zoom has been performed
+        self._zoom_performed = False
         self._mouse_down = False
         self._click_started_ts: Optional[float] = None
 
         self._ema_conf: Optional[float] = None
         self._ema_center: Optional[Tuple[float, float]] = None
         
-        # Advanced tracking for smooth detection
         self._velocity: Tuple[float, float] = (0.0, 0.0)
         self._last_position: Optional[Tuple[float, float]] = None
         self._last_position_ts: Optional[float] = None
         self._stable_detections: int = 0
-        self._required_stable_frames: int = 1  # faster lock-on for distant targets
+        self._required_stable_frames: int = 1
         self._last_valid_bbox: Optional[Tuple[int, int, int, int]] = None
-        self._prediction_weight: float = 0.4  # more aggressive prediction
+        self._prediction_weight: float = 0.4
         self._last_detection_ts: Optional[float] = None
-        self._low_conf_start_ts: Optional[float] = None  # Track when confidence drops below threshold
+        self._low_conf_start_ts: Optional[float] = None
 
         self._last_loss_ts: Optional[float] = None
         self._last_reentry_ts: Optional[float] = None
         self._movement_history: List[Tuple[float, Tuple[int, int]]] = []
-        self._click_cycle_phase: str = "cooldown"  # cooldown -> load -> shoot
+        self._click_cycle_phase: str = "cooldown"
         self._click_cycle_start_ts: Optional[float] = None
-        self._locked_aim_point: Optional[Tuple[int, int]] = None  # Locked aim during shoot phase
-        self._shoot_ref_bbox: Optional[Tuple[int, int, int, int]] = None  # Reference bbox captured before shooting
+        self._locked_aim_point: Optional[Tuple[int, int]] = None
+        self._shoot_ref_bbox: Optional[Tuple[int, int, int, int]] = None
         
-        # Lock-on tracking system
-        self._locked_on_santa: bool = False  # True when we've locked onto Santa
-        self._lock_start_ts: Optional[float] = None  # When lock-on started
-        self._lock_timeout_seconds: float = 30.0  # Reset after 30s of tracking
-        self._santa_bbox_history: List[Tuple[int, int, int, int]] = []  # Last N positions for velocity tracking
+        self._locked_on_santa: bool = False
+        self._lock_start_ts: Optional[float] = None
+        self._lock_timeout_seconds: float = 30.0
+        self._santa_bbox_history: List[Tuple[int, int, int, int]] = []
         self._max_bbox_history: int = 5
-        self._stuck_detection_threshold: int = 10  # Frames to check if stuck
-        self._stuck_counter: int = 0  # Count frames where bbox hasn't moved
-        self._last_movement_ts: Optional[float] = None  # Last time Santa moved significantly
-        self._movement_timeout_seconds: float = 2.0  # Release if no movement for 2 seconds
+        self._stuck_detection_threshold: int = 10
+        self._stuck_counter: int = 0
+        self._last_movement_ts: Optional[float] = None
+        self._movement_timeout_seconds: float = 2.0
         
-        # E key spam during cooldown
         self._last_e_press_ts: Optional[float] = None
-        self._e_spam_interval: float = 0.1  # Spam E every 100ms during cooldown
+        self._e_spam_interval: float = 0.1
         
-        # Santa confirmation before starting shoot cycle
-        self._santa_confirm_start_ts: Optional[float] = None  # When we first detected Santa
-        self._santa_confirm_duration: float = 1.5  # Require 1.5s continuous detection before starting
+        self._santa_confirm_start_ts: Optional[float] = None
+        self._santa_confirm_duration: float = 1.5
 
-        # Shoot-phase tracker & gating
-        self._shoot_tracker = None  # OpenCV tracker instance
+        self._shoot_tracker = None
         self._shoot_track_failures: int = 0
         self._shoot_pending_candidate: Optional[Tuple[int, int, int, int]] = None
         self._shoot_pending_count: int = 0
         self.shoot_roi_radius_px: int = int(self.cfg.get("shoot", {}).get("roi_radius_px", 220))
         self.shoot_accept_consecutive: int = int(self.cfg.get("shoot", {}).get("accept_consecutive", 2))
         self.shoot_color_red_weight: float = float(self.cfg.get("shoot", {}).get("red_weight", 0.12))
-        # Shoot resilience
         self.shoot_fallback_ms: int = int(self.cfg.get("shoot", {}).get("fallback_ms", 450))
         self.shoot_tracker_fail_reset: int = int(self.cfg.get("shoot", {}).get("tracker_fail_reset", 3))
         self.shoot_blend_detection: bool = bool(self.cfg.get("shoot", {}).get("blend_detection", True))
@@ -273,7 +254,6 @@ class SantaMacro:
         self.shoot_det_max_area_frac: float = float(self.cfg.get("shoot", {}).get("det_max_area_frac", 0.25))
         self.shoot_det_max_center_dist_px: int = int(self.cfg.get("shoot", {}).get("det_max_center_dist_px", 220))
         self.shoot_blend_iou_min: float = float(self.cfg.get("shoot", {}).get("blend_iou_min", 0.30))
-        # Template-tracker fallback (no opencv-contrib)
         self._shoot_tmpl: Optional[np.ndarray] = None
         self._shoot_tmpl_size: Optional[Tuple[int, int]] = None
         self._shoot_track_box: Optional[Tuple[int, int, int, int]] = None
@@ -292,12 +272,9 @@ class SantaMacro:
         pyautogui.PAUSE = 0
 
         self.logger.info("SantaMacro initialized. Templates loaded: %d", len(self.templates))
-        # Fraction of the ROI height to ignore at the top (HUD/compass)
         self.ignore_top_fraction = float(self.cfg.get("capture", {}).get("ignore_top_fraction", 0.0))
         self.tracking_stickiness_ms: int = int(self.cfg.get("aiming", {}).get("tracking_stickiness_ms", 600))
-        # Optional UI ignore zones (ROI-relative fractions)
         self.ignore_zones: List[dict] = self.cfg.get("capture", {}).get("ignore_zones", [])
-        # Verbose configuration summary for debugging
         self.logger.debug("Config: det_mode=%s method=%s scales=%s threshold=%.2f ema_alpha=%.2f", self.det_mode, self.method, self.scales, self.threshold, self.ema_alpha)
         self.logger.debug("ROI: left=%d top=%d width=%d height=%d ignore_top_fraction=%.2f", self.roi["left"], self.roi["top"], self.roi["width"], self.roi["height"], self.ignore_top_fraction)
         self.logger.debug("Click cycle: load=%dms shoot=%dms cooldown=%dms always_spam=%s skip_move_val=%s", self.click_load_ms, self.click_shoot_ms, self.click_cooldown_ms, self.click_always_spam, self.click_skip_movement_validation)
@@ -306,32 +283,26 @@ class SantaMacro:
         self.logger.debug("Shoot template: min_score=%.2f", self.shoot_tmpl_min_score)
         self.logger.debug("Aiming: mouse_smooth=%.2f max_mouse_speed=%dpx stickiness_ms=%d clamp=%s", self.mouse_smooth, self.max_mouse_speed_px, self.tracking_stickiness_ms, self.clamp_to_screen)
         
-        # Minimal Santa Lock-on Mode (inspired by santa.py)
         self.minimal_santa_mode_enabled = True
         self.smooth_mouse_pos = None
         self.smooth_factor = 0.22
         self.camera_keys_pressed = set()
         
-        # Camera control state (GPO Santa.py style)
         self.is_holding_arrow = False
-        self.current_arrow_key = None  # Track which arrow key is held
-        self.arrow_lock = threading.Lock()  # Thread-safe arrow key control
-        self.keys_lock = threading.Lock()  # Thread-safe key tracking
+        self.current_arrow_key = None
+        self.arrow_lock = threading.Lock()
+        self.keys_lock = threading.Lock()
         
-        # Search state (like GPO Santa.py Icon searching)
-        self.search_state = "idle"  # Start idle, only search when Santa is lost
-        self.last_santa_side = "left"  # Track which side Santa was last seen
+        self.search_state = "idle"
+        self.last_santa_side = "left"
         
-        # E key spamming for loot collection (like GPO Santa.py)
-        self.last_kill_time = 0  # Timestamp of last Santa kill
-        self.e_spam_duration = 3.0  # Spam E for 3 seconds after kill
+        self.last_kill_time = 0
+        self.e_spam_duration = 3.0
         
-        # YOLO model for Santa detection (like GPO Santa.py)
         self.yolo_model = None
         self.yolo_model_path = self.cfg.get("detection", {}).get("yolo_model_path", None)
-        self.santa_class_name = "Santa"  # Model trained with class "Santa"
+        self.santa_class_name = "Santa"
         if self.yolo_model_path:
-            # Make path absolute if relative (like GPO Santa.py does)
             if not os.path.isabs(self.yolo_model_path):
                 config_dir = os.path.dirname(os.path.abspath(config_path))
                 self.yolo_model_path = os.path.join(config_dir, self.yolo_model_path)
@@ -354,7 +325,6 @@ class SantaMacro:
         logger = logging.getLogger("SantaMacro")
         level = getattr(logging, log_cfg.get("level", "INFO"))
         logger.setLevel(level)
-        # Only console logging - no file logging
         fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
         sh = logging.StreamHandler()
         sh.setFormatter(fmt)
@@ -367,22 +337,20 @@ class SantaMacro:
         """Zoom out to max, then zoom in to a fixed level on startup."""
         self.logger.info("[ZOOM] Performing initial zoom setup...")
         
-        # Zoom out to maximum (20 scroll downs should be enough)
         self.logger.info("[ZOOM] Zooming out to maximum...")
         for _ in range(20):
-            pyautogui.scroll(-100)  # Negative = scroll down = zoom out
+            pyautogui.scroll(-100)
             time.sleep(0.05)
         
-        time.sleep(0.3)  # Wait for zoom out to stabilize
+        time.sleep(0.3)
         
-        # Zoom in to fixed level (user will adjust this value)
         zoom_in_amount = self.cfg.get("camera_control", {}).get("initial_zoom_in", 5)
         self.logger.info(f"[ZOOM] Zooming in by {zoom_in_amount} steps...")
         for _ in range(zoom_in_amount):
-            pyautogui.scroll(100)  # Positive = scroll up = zoom in
+            pyautogui.scroll(100)
             time.sleep(0.05)
         
-        time.sleep(0.3)  # Wait for zoom in to stabilize
+        time.sleep(0.3)
         self.logger.info("[ZOOM] Initial zoom setup complete!")
 
     def _is_roblox_focused(self) -> bool:
@@ -395,7 +363,7 @@ class SantaMacro:
             title = buff.value
             return "Roblox" in title or "roblox" in title.lower()
         except:
-            return True  # If check fails, assume focused to avoid blocking
+            return True
 
     def _compute_roi(self) -> dict:
         left = self.monitor["left"]
@@ -416,7 +384,6 @@ class SantaMacro:
         exts = {".png", ".jpg", ".jpeg", ".bmp"}
         for p in paths:
             candidates: List[str] = []
-            # Expand globs
             if any(ch in p for ch in ["*", "?"]):
                 candidates = sorted(glob.glob(p))
             elif os.path.isdir(p):
@@ -452,20 +419,16 @@ class SantaMacro:
 
     def _grab_frame(self, mask_cursor: bool = True) -> np.ndarray:
         shot = self.sct.grab(self.roi)
-        frame = np.array(shot)  # BGRA
+        frame = np.array(shot)
         frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-        # Mask out top HUD region to avoid false detections
         if getattr(self, "ignore_top_fraction", 0.0) > 0.0:
             mask_h = int(frame.shape[0] * self.ignore_top_fraction)
             if mask_h > 0:
                 frame[:mask_h, :] = 0
-        # During shoot, mask area around current cursor to avoid self-shoot artifacts
-        # Disableable so the shoot tracker can still see Santa (masking caused frozen aim).
         if mask_cursor:
             try:
                 if self._click_cycle_phase == "shoot" and self._mouse_down and self.shoot_ignore_radius_px > 0:
                     cur = pyautogui.position()
-                    # Convert absolute cursor to ROI coords
                     cx = cur.x - self.roi["left"]
                     cy = cur.y - self.roi["top"]
                     if 0 <= cx < frame.shape[1] and 0 <= cy < frame.shape[0]:
@@ -473,7 +436,6 @@ class SantaMacro:
                         self.logger.debug("Shoot mask circle applied at ROI(%d,%d) radius=%d", int(cx), int(cy), int(self.shoot_ignore_radius_px))
             except Exception:
                 pass
-        # Mask out middle-upper zone (false positives area)
         ignore_middle = self.cfg.get("capture", {}).get("ignore_middle_zone", {})
         if ignore_middle.get("enabled", False):
             left_f = ignore_middle.get("left_frac", 0.35)
@@ -487,7 +449,6 @@ class SantaMacro:
             y1 = int(h * (top_f + height_f))
             if x0 < x1 and y0 < y1:
                 frame[y0:y1, x0:x1] = 0
-        # Mask configured ignore zones (HUD, hit popups, etc.)
         if isinstance(self.ignore_zones, list) and self.ignore_zones:
             h, w = frame.shape[:2]
             for z in self.ignore_zones:
@@ -501,8 +462,6 @@ class SantaMacro:
                 y1 = min(h, int(y0 + h * hf))
                 if x1 > x0 and y1 > y0:
                     frame[y0:y1, x0:x1] = 0
-        # Always return BGR to preserve color information for HSV detection.
-        # Grayscale conversion will be done at call site when needed.
         return frame
 
     def _match_templates(self, frame: np.ndarray) -> Optional[DetectionResult]:
@@ -529,12 +488,11 @@ class SantaMacro:
                     loc = max_loc
                 if conf > best_conf:
                     x, y = loc
-                    bbox = (x, y, scaled_w, scaled_h)  # ROI-relative
+                    bbox = (x, y, scaled_w, scaled_h)
                     best_conf = conf
                     best_bbox = bbox
         if best_bbox is None:
             return DetectionResult(bbox=None, confidence=0.0)
-        # Convert ROI-relative to absolute screen coords
         abs_bbox = (
             self.roi["left"] + best_bbox[0],
             self.roi["top"] + best_bbox[1],
@@ -545,11 +503,9 @@ class SantaMacro:
 
     def _detect_motion_color(self, frame_bgr: np.ndarray) -> Optional[DetectionResult]:
         """Detect Santa's red sleigh using color segmentation"""
-        # Convert to HSV for color detection
         hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
 
-        # Red color range (Santa's sleigh) - expanded for reliability
-        lower_red1 = np.array([0, 80, 80])      # More lenient saturation/value
+        lower_red1 = np.array([0, 80, 80])
         upper_red1 = np.array([10, 255, 255])
         lower_red2 = np.array([160, 80, 80])
         upper_red2 = np.array([180, 255, 255])
@@ -558,7 +514,6 @@ class SantaMacro:
         mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
         red_mask = cv2.bitwise_or(mask1, mask2)
 
-        # Clean up mask
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel)
         red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel)
@@ -569,18 +524,15 @@ class SantaMacro:
 
         largest = max(contours, key=cv2.contourArea)
         area = cv2.contourArea(largest)
-        if area < 30:  # Even smaller threshold for distant detection
+        if area < 30:
             return None
 
         x, y, w, h = cv2.boundingRect(largest)
         
-        # CRITICAL: Reject tiny detections (cursor/crosshair)
-        # Santa is never smaller than 20x20 pixels even when far away
         if w < 20 or h < 20:
             self.logger.debug("Rejecting tiny color detection: %dx%d (min 20x20)", w, h)
             return None
         
-        # Skip detections in ignored top band
         if y < self._ignored_top_pixels():
             return None
         abs_bbox = (
@@ -590,12 +542,10 @@ class SantaMacro:
             h,
         )
 
-        # High confidence for color detection
         conf = min(0.95, 0.7 + (area / 5000.0))
         return DetectionResult(bbox=abs_bbox, confidence=conf)
 
     def _detect_shoot_red(self, frame_bgr: np.ndarray, ref_center: Tuple[int, int]) -> Optional[DetectionResult]:
-        # Search a tighter window around reference to avoid UI/flash
         cx, cy = ref_center
         rx = max(0, cx - self.roi["left"] - self.shoot_roi_radius_px)
         ry = max(0, cy - self.roi["top"] - self.shoot_roi_radius_px)
@@ -616,22 +566,18 @@ class SantaMacro:
         cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not cnts:
             return None
-        # Prioritize largest red blob near center
         largest = max(cnts, key=cv2.contourArea)
         area = cv2.contourArea(largest)
         if area < 25:
             return None
         x, y, w, h = cv2.boundingRect(largest)
         
-        # CRITICAL: Reject tiny detections (cursor/crosshair)
-        # Santa is never smaller than 20x20 pixels even when far away
         if w < 20 or h < 20:
             self.logger.debug("_detect_shoot_red: Rejecting tiny detection: %dx%d (min 20x20)", w, h)
             return None
         
         gx = self.roi["left"] + rx + x
         gy = self.roi["top"] + ry + y
-        # Confidence from red area, capped
         conf = min(0.95, 0.6 + area / 4000.0)
         return DetectionResult(bbox=(gx, gy, w, h), confidence=conf)
 
@@ -646,15 +592,12 @@ class SantaMacro:
         morph_k = int(self.motion_cfg.get("morph_kernel", 5))
         min_area = int(self.motion_cfg.get("min_area", 800))
 
-        # Multi-scale detection - catches small distant objects
         diff = cv2.absdiff(frame_gray, self._prev_frame_gray)
         diff = cv2.GaussianBlur(diff, (blur_k, blur_k), 0)
 
-        # Multi-threshold approach for better range detection
         _, mask_aggressive = cv2.threshold(diff, max(10, thr - 10), 255, cv2.THRESH_BINARY)
         _, mask_normal = cv2.threshold(diff, thr, 255, cv2.THRESH_BINARY)
 
-        # Combine masks - use aggressive for small objects
         mask = cv2.bitwise_or(mask_aggressive, mask_normal)
 
         if morph_k > 1:
@@ -670,14 +613,12 @@ class SantaMacro:
         if not contours:
             return DetectionResult(bbox=None, confidence=0.0)
 
-        # Get all significant moving objects, prioritize by area and position
         ignored_top = self._ignored_top_pixels()
         def _y_of(c):
             return cv2.boundingRect(c)[1]
         valid_contours = [c for c in contours if cv2.contourArea(c) >= min_area and _y_of(c) >= ignored_top]
 
         if not valid_contours:
-            # Check for very small objects (distant Santa)
             small_contours = [c for c in contours if cv2.contourArea(c) >= min_area * 0.25 and _y_of(c) >= ignored_top]
             if small_contours:
                 largest = max(small_contours, key=cv2.contourArea)
@@ -690,23 +631,19 @@ class SantaMacro:
             area = cv2.contourArea(largest)
             self.logger.debug("Motion detection: using VALID contour area=%.1f", area)
 
-        if area < min_area * 0.20:  # Absolute minimum
+        if area < min_area * 0.20:
             if self._last_valid_bbox is None:
                 self.logger.debug("Motion detection: area below minimum and no last bbox")
                 return DetectionResult(bbox=None, confidence=0.0)
-            # If we were already tracking, allow small area with low confidence
             area = min_area * 0.15
             self.logger.debug("Motion detection: relaxed area due to tracking -> %.1f", area)
 
         x, y, w, h = cv2.boundingRect(largest)
         
-        # CRITICAL: Reject tiny detections (cursor/crosshair)
-        # Santa is never smaller than 20x20 pixels even when far away
         if w < 20 or h < 20:
             self.logger.debug("_detect_motion: Rejecting tiny detection: %dx%d (min 20x20)", w, h)
             return DetectionResult(bbox=None, confidence=0.0)
         
-        # Skip if in ignored top band
         if y < ignored_top:
             self.logger.debug("Motion detection: skipped in top band y=%d < %d", y, ignored_top)
             return DetectionResult(bbox=None, confidence=0.0)
@@ -719,7 +656,6 @@ class SantaMacro:
         )
         roi_area = self.roi["width"] * self.roi["height"]
 
-        # Confidence relies mainly on size; allow small boosts when previously tracking
         size_factor = min(1.0, float(area) / max(1.0, roi_area * 0.08))
         base_conf = min(0.95, size_factor * 0.9 + 0.08)
         if self._last_valid_bbox is not None:
@@ -736,8 +672,6 @@ class SantaMacro:
         if prev is None:
             return pt
         return (alpha * pt[0] + (1 - alpha) * prev[0], alpha * pt[1] + (1 - alpha) * prev[1])
-
-    # ============ SMART TRACKING SYSTEM ============
     
     def _start_learning_phase(self):
         """Initialize learning phase to understand Santa's characteristics"""
@@ -764,7 +698,6 @@ class SantaMacro:
         size = max(w, h)
         center = (x + w // 2, y + h // 2)
         
-        # FIRST DETECTION: Set as reference
         if self._learning_first_bbox is None:
             self._learning_first_bbox = bbox
             self._last_santa_center = center
@@ -774,12 +707,10 @@ class SantaMacro:
                            w, h, x, y, confidence)
             return
         
-        # VALIDATE: Must be similar to first detection (not a random different object)
         first_x, first_y, first_w, first_h = self._learning_first_bbox
         first_size = max(first_w, first_h)
         first_center = (first_x + first_w // 2, first_y + first_h // 2)
         
-        # Check size similarity (within 2x range)
         size_ratio = size / first_size if first_size > 0 else 999
         if size_ratio < 0.5 or size_ratio > 2.0:
             self.logger.info("⚠️ LEARNING: Ignoring detection - size %dx%d too different from first %dx%d (ratio=%.2f)",
@@ -789,12 +720,11 @@ class SantaMacro:
             self.logger.info("⏱️ LEARNING: Resetting continuous timer due to size mismatch.")
             return
         
-        # Check position jump (must be reasonable movement from last position)
         if self._last_santa_center:
             dx = center[0] - self._last_santa_center[0]
             dy = center[1] - self._last_santa_center[1]
             jump_dist = math.sqrt(dx*dx + dy*dy)
-            max_reasonable_jump = 200  # pixels per frame
+            max_reasonable_jump = 200
             
             if jump_dist > max_reasonable_jump:
                 self.logger.info("⚠️ LEARNING: Ignoring detection - jumped %dpx from last position (max %d)",
@@ -804,18 +734,15 @@ class SantaMacro:
                 self.logger.info("⏱️ LEARNING: Resetting continuous timer due to jump.")
                 return
         
-        # VALID SAMPLE - Store it
         self._learning_samples.append((now, bbox, frame_bgr.copy()))
         self._learning_stable_count += 1
-        self._learning_lost_count = 0  # Reset lost counter
+        self._learning_lost_count = 0
         self._last_santa_center = center
-        # If not already running, start continuous timer
         if self._learning_continuous_start is None:
             self._learning_continuous_start = now
             self.logger.info("⏱️ LEARNING: Continuous timer started.")
         self._learning_last_sample_ts = now
         
-        # Update size range
         if len(self._learning_samples) == 1:
             self._santa_profile.size_min = size
             self._santa_profile.size_max = size
@@ -823,10 +750,8 @@ class SantaMacro:
             self._santa_profile.size_min = min(self._santa_profile.size_min, size)
             self._santa_profile.size_max = max(self._santa_profile.size_max, size)
         
-        # Track movement
         self._santa_profile.movement_history.append((now, center))
         
-        # Calculate average speed
         if len(self._santa_profile.movement_history) >= 2:
             total_dist = 0.0
             total_time = 0.0
@@ -844,10 +769,7 @@ class SantaMacro:
             if total_time > 0:
                 self._santa_profile.avg_speed = total_dist / total_time
         
-        # Extract color signature from the bbox region
-        roi_x = max(0, x - self.roi["left"])
-        roi_y = max(0, y - self.roi["top"])
-        roi_x2 = min(frame_bgr.shape[1], roi_x + w)
+
         roi_y2 = min(frame_bgr.shape[0], roi_y + h)
         
         if roi_x2 > roi_x and roi_y2 > roi_y:
@@ -857,7 +779,6 @@ class SantaMacro:
             hist = cv2.normalize(hist, hist).flatten()
             self._santa_profile.color_signature = hist
         
-        # Detailed logging every 25 samples
         elapsed = now - self._learning_start_ts
         continuous = 0.0
         if self._learning_continuous_start:
@@ -870,7 +791,6 @@ class SantaMacro:
     
     def _finalize_learning(self):
         """Complete learning phase and lock onto Santa"""
-        # Require at least 3 seconds of continuous stable detections
         min_required_samples = 50
         min_continuous = 3.0
         now = time.time()
@@ -887,7 +807,6 @@ class SantaMacro:
             self._locked_santa = False
             self.state = MacroState.DETECTING
             return
-        # Check if movement pattern makes sense
         if self._santa_profile.avg_speed < 10 or self._santa_profile.avg_speed > 500:
             self.logger.warning("⚠️ LEARNING FAILED: Unrealistic speed %.1f px/s (expected 10-500)", 
                               self._santa_profile.avg_speed)
@@ -902,7 +821,6 @@ class SantaMacro:
         self._locked_santa = True
         self.state = MacroState.DETECTING
         
-        # Add tolerance to learned size range
         size_range = self._santa_profile.size_max - self._santa_profile.size_min
         tolerance = int(size_range * self.size_tolerance)
         self._santa_profile.size_min = max(self.min_santa_size, self._santa_profile.size_min - tolerance)
@@ -924,30 +842,26 @@ class SantaMacro:
         Returns: (is_valid, rejection_reason)
         """
         if not self._locked_santa:
-            return (True, "")  # Accept all during learning
+            return (True, "")
         
         x, y, w, h = bbox
         size = max(w, h)
         center = (x + w // 2, y + h // 2)
         
-        # 1. Size validation
         if size < self._santa_profile.size_min or size > self._santa_profile.size_max:
             return (False, f"SIZE={size}px not in [{self._santa_profile.size_min}-{self._santa_profile.size_max}]")
         
-        # 2. Position jump validation (prevent jumping to distant false positives)
         if self._last_santa_center:
             dx = center[0] - self._last_santa_center[0]
             dy = center[1] - self._last_santa_center[1]
             jump_dist = math.sqrt(dx*dx + dy*dy)
             
-            # Calculate expected max jump based on Santa's speed
-            expected_max_jump = self._santa_profile.avg_speed * self.tick_interval * 3.0  # 3x tolerance
+            expected_max_jump = self._santa_profile.avg_speed * self.tick_interval * 3.0
             max_allowed_jump = max(self.position_jump_threshold, expected_max_jump)
             
             if jump_dist > max_allowed_jump:
                 return (False, f"JUMP={int(jump_dist)}px > max={int(max_allowed_jump)}px from ({self._last_santa_center[0]},{self._last_santa_center[1]}) to ({center[0]},{center[1]})")
         
-        # 3. Color similarity validation (if we have color signature)
         if self._santa_profile.color_signature is not None:
             roi_x = max(0, x - self.roi["left"])
             roi_y = max(0, y - self.roi["top"])
@@ -960,7 +874,6 @@ class SantaMacro:
                 hist = cv2.calcHist([hsv_region], [0], None, [180], [0, 180])
                 hist = cv2.normalize(hist, hist).flatten()
                 
-                # Compare histograms
                 similarity = cv2.compareHist(self._santa_profile.color_signature, hist, cv2.HISTCMP_CORREL)
                 
                 if similarity < self.color_similarity_threshold:
@@ -969,17 +882,14 @@ class SantaMacro:
         return (True, "")
     
     def _update_santa_tracking(self, bbox: Tuple[int, int, int, int]):
-        """Update tracking information after validated detection"""
         x, y, w, h = bbox
         center = (x + w // 2, y + h // 2)
         now = time.time()
         
-        # Log update occasionally
         if self._debug_log_counter % 25 == 0:
-            self.logger.info("🎯 TRACKING UPDATE: pos=(%d,%d) size=%dx%d", 
+            self.logger.info("TRACKING UPDATE: pos=(%d,%d) size=%dx%d", 
                            center[0], center[1], w, h)
         
-        # Update velocity if we have previous position
         if self._last_santa_center and self._last_position_ts:
             dt = now - self._last_position_ts
             if dt > 0:
@@ -987,7 +897,6 @@ class SantaMacro:
                 dy = center[1] - self._last_santa_center[1]
                 vx = dx / dt
                 vy = dy / dt
-                # Smooth velocity with EMA
                 self._santa_velocity = (
                     0.7 * self._santa_velocity[0] + 0.3 * vx,
                     0.7 * self._santa_velocity[1] + 0.3 * vy
@@ -996,12 +905,10 @@ class SantaMacro:
         self._last_santa_center = center
         self._last_position_ts = now
         
-        # Predict next position based on velocity
         pred_x = center[0] + self._santa_velocity[0] * self.tick_interval
         pred_y = center[1] + self._santa_velocity[1] * self.tick_interval
         self._predicted_position = (int(pred_x), int(pred_y))
 
-        # Post-lock: require N consecutive valid detections before allowing shooting
         if self._locked_santa:
             self._postlock_consecutive_valid += 1
             if self._postlock_consecutive_valid == self._postlock_required_valid:
@@ -1014,7 +921,6 @@ class SantaMacro:
         if not self.camera_control_enabled or not self._locked_santa:
             return False
         
-        # If we have a detection, check if it's near left edge
         if bbox:
             x, y, w, h = bbox
             distance_from_left = x - self.monitor["left"]
@@ -1022,7 +928,6 @@ class SantaMacro:
             if distance_from_left < self.camera_left_edge_threshold:
                 return True
         
-        # If we lost tracking and predicted position is off-screen left
         elif self._predicted_position:
             pred_x, pred_y = self._predicted_position
             if pred_x < self.monitor["left"] + self.camera_left_edge_threshold:
@@ -1035,27 +940,22 @@ class SantaMacro:
         screen_center_x = self.monitor["left"] + self.monitor["width"] // 2
         offset_x = target_x - screen_center_x
         
-        # Only drag if offset is significant
         if abs(offset_x) < self.camera_center_deadzone:
             return
         
-        # Proportional control - more offset = faster drag
         drag_distance = int(offset_x * self.camera_drag_speed)
         
-        # Hold right mouse if not already held
         if not self._right_mouse_down:
             pyautogui.mouseDown(button='right')
             self._right_mouse_down = True
             self._camera_drag_start_ts = time.time()
-            if self._debug_log_counter % 25 == 0:  # Log occasionally
+            if self._debug_log_counter % 25 == 0:
                 self.logger.info("🎥 CAMERA DRAG: Started | Target offset: %dpx", offset_x)
         
-        # Move mouse to drag camera
         cur = pyautogui.position()
         new_x = cur.x + drag_distance
         new_y = cur.y
         
-        # Keep mouse within screen bounds
         new_x = max(self.monitor["left"], min(self.monitor["left"] + self.monitor["width"] - 1, new_x))
         
         pyautogui.moveTo(new_x, new_y, duration=0)
@@ -1073,7 +973,6 @@ class SantaMacro:
                 self.logger.info("🎥 CAMERA DRAG: Stopped | Duration: %.1fs", duration)
                 self._camera_drag_start_ts = None
 
-    # ============ END SMART TRACKING SYSTEM ============
 
     def _aim_point(self, bbox: Tuple[int, int, int, int]) -> Tuple[int, int]:
         x, y, w, h = bbox
@@ -1096,7 +995,7 @@ class SantaMacro:
     def _push_movement(self, pt: Tuple[int, int]):
         now = time.time()
         self._movement_history.append((now, pt))
-        cutoff = now - 2.0  # keep last ~2 seconds
+        cutoff = now - 2.0
         while self._movement_history and self._movement_history[0][0] < cutoff:
             self._movement_history.pop(0)
 
@@ -1117,7 +1016,7 @@ class SantaMacro:
             total_time += dt
         if total_time <= 0:
             return False
-        speed = total_dist / total_time  # px/sec
+        speed = total_dist / total_time
         is_moving = speed >= self.click_min_move_speed
         if not is_moving:
             self.logger.debug("Movement speed %.2f px/s < threshold %.2f", speed, self.click_min_move_speed)
@@ -1126,11 +1025,10 @@ class SantaMacro:
     def _move_mouse_towards(self, target: Tuple[int, int]):
         cur = pyautogui.position()
         
-        # Disable velocity prediction during shoot to avoid drift toward flashes
         now = time.time()
         if self._click_cycle_phase != "shoot" and self._last_position and self._last_position_ts:
             dt = now - self._last_position_ts
-            if dt > 0 and dt < 0.5:  # Valid time delta
+            if dt > 0 and dt < 0.5:
                 vx = (target[0] - self._last_position[0]) / dt
                 vy = (target[1] - self._last_position[1]) / dt
                 self._velocity = (
@@ -1148,15 +1046,13 @@ class SantaMacro:
         dy = target[1] - cur.y
         distance = math.sqrt(dx*dx + dy*dy)
         
-        # Adaptive smoothing - faster when far, slower when close
         if distance > 100:
-            smooth = self.mouse_smooth * 0.6  # Faster for large distances
+            smooth = self.mouse_smooth * 0.6
         elif distance > 50:
             smooth = self.mouse_smooth
         else:
-            smooth = self.mouse_smooth * 1.5  # Slower for precision
+            smooth = self.mouse_smooth * 1.5
 
-        # During shoot, boost speed but keep precision
         if self._click_cycle_phase == "shoot":
             if distance > 120:
                 smooth *= 0.6
@@ -1166,7 +1062,6 @@ class SantaMacro:
         step_x = int(dx * smooth)
         step_y = int(dy * smooth)
 
-        # Minimum step to avoid crawling when far
         if distance > 80:
             if step_x == 0 and dx != 0:
                 step_x = 2 if dx > 0 else -2
@@ -1181,12 +1076,10 @@ class SantaMacro:
         new_x = cur.x + step_x
         new_y = cur.y + step_y
         
-        # Use Windows SendInput for realistic mouse movement that games recognize
         try:
             import ctypes
             from ctypes import wintypes
             
-            # Define INPUT structures for SendInput
             class MOUSEINPUT(ctypes.Structure):
                 _fields_ = [
                     ('dx', wintypes.LONG),
@@ -1206,20 +1099,16 @@ class SantaMacro:
                     ('u', _INPUT)
                 ]
             
-            # Constants
             INPUT_MOUSE = 0
             MOUSEEVENTF_MOVE = 0x0001
             MOUSEEVENTF_ABSOLUTE = 0x8000
             
-            # Get screen dimensions for absolute coordinates
             screen_width = ctypes.windll.user32.GetSystemMetrics(0)
             screen_height = ctypes.windll.user32.GetSystemMetrics(1)
             
-            # Convert to absolute coordinates (0-65535 range)
             abs_x = int((new_x * 65536) / screen_width)
             abs_y = int((new_y * 65536) / screen_height)
             
-            # Create INPUT structure
             extra = ctypes.c_ulong(0)
             ii = INPUT()
             ii.type = INPUT_MOUSE
@@ -1232,7 +1121,6 @@ class SantaMacro:
                 dwExtraInfo=ctypes.pointer(extra)
             )
             
-            # Send the input
             ctypes.windll.user32.SendInput(1, ctypes.byref(ii), ctypes.sizeof(ii))
             self.logger.debug(f"Mouse moved via SendInput to ({new_x}, {new_y})")
         except Exception as e:
@@ -1258,12 +1146,10 @@ class SantaMacro:
             self._click_started_ts = time.time()
             self.logger.info("mouseDown")
 
-    # --- Shoot-phase tracking helpers ---
     def _create_tracker(self):
         import cv2
         tracker = None
         try:
-            # Prefer CSRT for accuracy
             if hasattr(cv2, "legacy") and hasattr(cv2.legacy, "TrackerCSRT_create"):
                 tracker = cv2.legacy.TrackerCSRT_create()
             elif hasattr(cv2, "TrackerCSRT_create"):
@@ -1287,7 +1173,6 @@ class SantaMacro:
         return tracker
 
     def _init_shoot_tracker(self, frame_bgr: np.ndarray, bbox_global: Tuple[int, int, int, int]):
-        # Convert global bbox to ROI-local coords for tracker
         x, y, w, h = bbox_global
         rx = max(0, x - self.roi["left"]) 
         ry = max(0, y - self.roi["top"]) 
@@ -1345,18 +1230,15 @@ class SantaMacro:
         if self._shoot_tmpl is None or self._shoot_tmpl_size is None:
             return None
         tw, th = self._shoot_tmpl_size
-        # Determine search center
         ref = self._shoot_track_box or self._shoot_ref_bbox
         if ref is None:
             return None
         cx, cy = self._aim_point(ref)
-        # Build local search window around center
         rx = max(0, cx - self.roi["left"] - self.shoot_roi_radius_px)
         ry = max(0, cy - self.roi["top"] - self.shoot_roi_radius_px)
         rw = min(self.roi["width"], (cx - self.roi["left"] + self.shoot_roi_radius_px)) - rx
         rh = min(self.roi["height"], (cy - self.roi["top"] + self.shoot_roi_radius_px)) - ry
         if rw <= tw or rh <= th:
-            # Expand to full ROI if window too small
             rx, ry = 0, 0
             rw, rh = self.roi["width"], self.roi["height"]
         search = frame_bgr[int(ry):int(ry+rh), int(rx):int(rx+rw)]
@@ -1386,30 +1268,24 @@ class SantaMacro:
         screen_right = self.roi["left"] + self.roi["width"]
         screen_bottom = self.roi["top"] + self.roi["height"]
         
-        # Center of bbox
         cx = x + w // 2
         cy = y + h // 2
         
-        # Left screen from left edge (allow 50px margin)
         if cx < screen_left + 50:
             self.logger.info("Santa left screen from LEFT edge (cx=%d < %d)", cx, screen_left + 50)
             return True
         
-        # Left screen from right edge
         if cx > screen_right - 50:
             self.logger.info("Santa left screen from RIGHT edge (cx=%d > %d)", cx, screen_right - 50)
             return True
         
-        # Left screen from top edge
         if cy < screen_top + 50:
             self.logger.info("Santa left screen from TOP edge (cy=%d < %d)", cy, screen_top + 50)
             return True
         
-        # Don't check bottom - Santa doesn't leave from bottom
         return False
     
     def _red_ratio(self, frame_bgr: np.ndarray, bbox_global: Tuple[int, int, int, int]) -> float:
-        # Compute fraction of red-ish pixels inside bbox (global -> local)
         x, y, w, h = bbox_global
         rx = max(0, x - self.roi["left"]) 
         ry = max(0, y - self.roi["top"]) 
@@ -1419,7 +1295,6 @@ class SantaMacro:
         if crop.size == 0:
             return 0.0
         hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-        # Red spans two ranges in HSV
         lower1 = np.array([0, 100, 70], dtype=np.uint8)
         upper1 = np.array([10, 255, 255], dtype=np.uint8)
         lower2 = np.array([160, 100, 70], dtype=np.uint8)
@@ -1433,18 +1308,15 @@ class SantaMacro:
         """Start lock-on tracking of Santa. Returns True if lock-on initiated."""
         x, y, w, h = bbox
         
-        # Minimum size requirement - Santa should be at least 30x30 pixels
         if w < 30 or h < 30:
             self.logger.debug("LOCK-ON REJECTED: Too small (w=%d, h=%d < 30px)", w, h)
             return False
         
-        # Maximum size - reject huge detections (probably buildings)
         roi_area = self.roi["width"] * self.roi["height"]
         if (w * h) > roi_area * 0.25:
             self.logger.debug("LOCK-ON REJECTED: Too large (area=%d > 25%% ROI)", w * h)
             return False
         
-        # Check aspect ratio (Santa should be roughly square-ish)
         aspect = w / max(h, 1)
         if aspect < 0.3 or aspect > 3.5:
             self.logger.debug("LOCK-ON REJECTED: Bad aspect ratio %.2f", aspect)
@@ -1452,7 +1324,7 @@ class SantaMacro:
         
         self._locked_on_santa = True
         self._lock_start_ts = time.time()
-        self._last_movement_ts = time.time()  # Initialize movement timer
+        self._last_movement_ts = time.time()
         self._santa_bbox_history = [bbox]
         self._stuck_counter = 0
         self.logger.info("LOCK-ON INITIATED: Santa detected at bbox=%s (w=%d, h=%d)", bbox, w, h)
@@ -1462,18 +1334,15 @@ class SantaMacro:
         """Update lock-on tracking with new Santa position."""
         now = time.time()
         
-        # Check if bbox has moved significantly from last position
         if self._santa_bbox_history:
             last_bbox = self._santa_bbox_history[-1]
             last_cx, last_cy = last_bbox[0] + last_bbox[2] // 2, last_bbox[1] + last_bbox[3] // 2
             curr_cx, curr_cy = bbox[0] + bbox[2] // 2, bbox[1] + bbox[3] // 2
             distance = math.hypot(curr_cx - last_cx, curr_cy - last_cy)
             
-            # Santa is ALWAYS moving - if movement less than 10 pixels, it's suspicious
             if distance < 10:
                 self._stuck_counter += 1
                 
-                # Check if we've been still for too long (2 seconds)
                 if self._last_movement_ts:
                     time_still = now - self._last_movement_ts
                     if time_still > self._movement_timeout_seconds:
@@ -1481,19 +1350,16 @@ class SantaMacro:
                         self._release_lock_on(f"Static object detected (no movement for {time_still:.1f}s)")
                         return
                 
-                # Also check frame counter for immediate feedback
                 if self._stuck_counter >= self._stuck_detection_threshold:
                     self.logger.warning("STUCK DETECTION: Bbox hasn't moved in %d frames (dist=%.1f)", 
                                       self._stuck_counter, distance)
                     self._release_lock_on(f"Stuck on static object ({self._stuck_counter} frames)")
                     return
             else:
-                # Good movement detected - reset counters
                 self._stuck_counter = 0
                 self._last_movement_ts = now
                 self.logger.debug("Movement detected: %.1f pixels", distance)
         else:
-            # First position
             self._last_movement_ts = now
         
         self._santa_bbox_history.append(bbox)
@@ -1515,7 +1381,6 @@ class SantaMacro:
         self._last_valid_bbox = None
     
     def _is_valid_track_box(self, frame_bgr: np.ndarray, bbox_global: Tuple[int, int, int, int]) -> bool:
-        # Reject tiny or huge boxes and enforce red color in shoot target
         w, h = bbox_global[2], bbox_global[3]
         if w < 28 or h < 28:
             return False
@@ -1538,20 +1403,17 @@ class SantaMacro:
     def _should_release_click(self) -> bool:
         if not self._mouse_down:
             return False
-        # Release if held too long
         if self._click_started_ts and (time.time() - self._click_started_ts) * 1000.0 > self.max_click_duration_ms:
             return True
         return False
 
     def _draw_overlay(self, frame_bgr: np.ndarray, det: DetectionResult, aim: Optional[Tuple[int, int]], attack_mode: str = "megapow"):
-        # Throttle to tick interval to avoid flicker/z-order fights
         now = time.time()
         if now - self._last_overlay_update_ts < self.tick_interval * 0.9:
             return
         self._last_overlay_update_ts = now
 
         try:
-            # Ensure single window created once
             if self.overlay_engine == "qt":
                 if not self._qt_overlay:
                     self._qt_overlay = OverlayQt(
@@ -1564,16 +1426,13 @@ class SantaMacro:
             else:
                 self._ensure_overlay_window(frame_bgr.shape[1], frame_bgr.shape[0])
 
-            # Create transparent canvas if draw_frame is false, otherwise use frame
             if self.overlay_draw_frame:
                 img = frame_bgr.copy()
             else:
                 img = np.zeros((self.roi["height"], self.roi["width"], 3), dtype=np.uint8)
             
-            # Prepare status text for status bar mode
             status_text = None
             if self.overlay_status_bar_mode:
-                # Determine current state
                 if self._paused:
                     state_display = "PAUSED"
                 elif self._running:
@@ -1584,7 +1443,6 @@ class SantaMacro:
                 status_text = f"{state_display}\nFPS: {self._fps:.1f} | Conf: {det.confidence:.2f}"
             
             if not self.overlay_status_bar_mode:
-                # Draw on image for non-status-bar mode
                 if det.bbox is not None:
                     x, y, w, h = det.bbox
                     cv2.rectangle(img, (x - self.roi["left"], y - self.roi["top"]), (x - self.roi["left"] + w, y - self.roi["top"] + h), (0, 255, 0), 3)
@@ -1624,7 +1482,6 @@ class SantaMacro:
             cv2.namedWindow(self.overlay_title, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(self.overlay_title, width, height)
             cv2.moveWindow(self.overlay_title, self.roi["left"], self.roi["top"])
-            # Make window topmost and click-through on Windows
             if platform.system() == "Windows":
                 try:
                     user32 = ctypes.windll.user32
@@ -1651,12 +1508,9 @@ class SantaMacro:
 
                         ex = GetWindowLongW(hwnd, GWL_EXSTYLE)
                         SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST)
-                        # Full opacity but layered (needed for click-through)
                         SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
-                        # Keep on top without stealing focus
                         SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
 
-                        # Try to remove border/title
                         WS_CAPTION = 0x00C00000
                         WS_THICKFRAME = 0x00040000
                         WS_MINIMIZE = 0x20000000
@@ -1707,16 +1561,13 @@ class SantaMacro:
                 name = str(key)
         hk = self.cfg["hotkeys"]
         if isinstance(name, str):
-            # F1 toggles start/stop
             if name.lower() == hk.get("toggle", "f1").lower():
                 if self._running:
-                    # Stop
                     self._running = False
                     self._paused = False
                     self.state = MacroState.IDLE
                     if self._mouse_down:
                         self._click_up()
-                    # Release all arrow keys immediately
                     try:
                         with self.arrow_lock:
                             if self.current_arrow_key:
@@ -1730,7 +1581,6 @@ class SantaMacro:
                             self.current_arrow_key = None
                     except Exception as e:
                         self.logger.warning(f"Error releasing keys on stop: {e}")
-                    # Reset search state and tracking variables
                     self.search_state = "idle"
                     self.attack_phase = "idle"
                     self.attack_committed = False
@@ -1741,8 +1591,6 @@ class SantaMacro:
                     self._detection_movement_history.clear()
                     self.logger.info("Hotkey TOGGLE -> STOPPED (running=False)")
                 else:
-                    # Start
-                    # Perform initial zoom setup before starting search
                     if not self._zoom_performed:
                         self._perform_initial_zoom()
                         self._zoom_performed = True
@@ -1750,10 +1598,8 @@ class SantaMacro:
                     self._paused = False
                     self.state = MacroState.DETECTING
                     self.logger.info("Hotkey TOGGLE -> STARTED (running=True)")
-            # Legacy support for old config
             elif name.lower() == hk.get("start", "").lower() and hk.get("start"):
                 if not self._running:
-                    # Perform initial zoom setup before starting search
                     if not self._zoom_performed:
                         self._perform_initial_zoom()
                         self._zoom_performed = True
@@ -1768,7 +1614,6 @@ class SantaMacro:
                     self.state = MacroState.IDLE
                     if self._mouse_down:
                         self._click_up()
-                    # Release all arrow keys immediately
                     try:
                         with self.arrow_lock:
                             if self.current_arrow_key:
@@ -1803,8 +1648,6 @@ class SantaMacro:
         try:
             while self.state != MacroState.SHUTDOWN:
                 start_ts = time.time()
-                # Capture BGR frame and derive grayscale for motion/template detection
-                # Avoid masking around cursor while shooting so the tracker keeps seeing Santa
                 frame_bgr = self._grab_frame(mask_cursor=not (self._click_cycle_phase == "shoot"))
                 frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
 
@@ -1830,20 +1673,14 @@ class SantaMacro:
                 
 
                 if self.minimal_santa_mode_enabled:
-                    # Log that we're in minimal mode (first time only)
                     if self._debug_log_counter == 0:
                         self.logger.info("[MINIMAL MODE] Active - running YOLO detection loop")
                     
-                    # Log search state periodically for debugging
                     if self._debug_log_counter % 10 == 0 and self.search_state != "idle":
                         self.logger.info(f"[FRAME {self._debug_log_counter}] search_state={self.search_state}, attack_phase={self.attack_phase}")
                     
-                    # EXECUTE SEARCH MOVEMENT FIRST (like GPO Santa.py - every frame)
-                    # This ensures camera rotates even before detection starts
-                    # Press search keys with small delay to avoid overshooting
                     if self.search_state == "searching_left":
                         with self.arrow_lock:
-                            # Only press key once when first starting to hold
                             if not self.is_holding_arrow or self.current_arrow_key != 'left':
                                 pydirectinput.keyDown('left')
                                 self.logger.info("[SEARCH] Holding LEFT arrow (searching for Santa)")
@@ -1851,13 +1688,11 @@ class SantaMacro:
                                     self.camera_keys_pressed.add('left')
                                 self.is_holding_arrow = True
                                 self.current_arrow_key = 'left'
-                        # Log every 5 frames to verify search is executing
                         if self._debug_log_counter % 5 == 0:
                             self.logger.info(f"[SEARCH ACTIVE] Frame {self._debug_log_counter}: Holding LEFT key")
-                        time.sleep(0.05)  # Small delay to prevent aggressive rotation
+                        time.sleep(0.05)
                     elif self.search_state == "searching_right":
                         with self.arrow_lock:
-                            # Only press key once when first starting to hold
                             if not self.is_holding_arrow or self.current_arrow_key != 'right':
                                 pydirectinput.keyDown('right')
                                 self.logger.info("[SEARCH] Holding RIGHT arrow (searching for Santa)")
@@ -1865,26 +1700,22 @@ class SantaMacro:
                                     self.camera_keys_pressed.add('right')
                                 self.is_holding_arrow = True
                                 self.current_arrow_key = 'right'
-                        # Log every 5 frames to verify search is executing
                         if self._debug_log_counter % 5 == 0:
                             self.logger.info(f"[SEARCH ACTIVE] Frame {self._debug_log_counter}: Holding RIGHT key")
-                        time.sleep(0.05)  # Small delay to prevent aggressive rotation
+                        time.sleep(0.05)
                     
-                    # Use YOLO model for Santa detection (like GPO Santa.py)
                     best_santa = None
                     
                     if self.yolo_model:
                         try:
                             results = self.yolo_model(frame_bgr, verbose=False)
                             
-                            # Check if stopped right after detection (don't process results)
                             if not self._running:
                                 self.logger.info("[STOP] Detected stop signal after YOLO detection")
                                 break
                             
                             for result in results:
                                 boxes = result.boxes
-                                # Log ALL detections to see what model is predicting
                                 if self._debug_log_counter % 25 == 0 and len(boxes) > 0:
                                     self.logger.info(f"[YOLO RAW] Found {len(boxes)} detections")
                                 
@@ -1893,7 +1724,6 @@ class SantaMacro:
                                     class_name = result.names[class_id]
                                     confidence = float(box.conf[0])
                                     
-                                    # Log every detection regardless of threshold
                                     if self._debug_log_counter % 25 == 0:
                                         self.logger.info(f"[YOLO RAW] class={class_name}, conf={confidence:.4f}")
                                     
@@ -1904,47 +1734,33 @@ class SantaMacro:
                                         candidate_w = int(x2 - x1)
                                         candidate_h = int(y2 - y1)
                                         
-                                        # SIZE FILTER: Reject detections that are too small (false positives)
-                                        # Real Santa is typically 80-200 pixels wide, not 20 pixels
-                                        min_santa_width = 50  # Minimum 50 pixels wide
-                                        min_santa_height = 30  # Minimum 30 pixels tall
+                                        min_santa_width = 50
+                                        min_santa_height = 30
                                         if candidate_w < min_santa_width or candidate_h < min_santa_height:
                                             if self._debug_log_counter % 10 == 0:
                                                 self.logger.info(f"[YOLO REJECT] Too small: {candidate_w}x{candidate_h} (min {min_santa_width}x{min_santa_height}) conf={confidence:.2f}")
                                             continue
                                         
-                                        # POSITION CONTINUITY VALIDATION: Reject detections that jump too far
-                                        # Santa moves naturally (~5-50 pixels per frame), not 400+ pixel teleports
-                                        # BUT: Skip validation for 3 frames after exiting search (camera just rotated)
                                         is_valid_candidate = True
                                         frames_since_search = self._debug_log_counter - getattr(self, '_search_exit_frame', -999)
                                         skip_validation = frames_since_search < 3
                                         
                                         if self._last_santa_center is not None and self.search_state == "idle" and not skip_validation:
-                                            # Only validate during tracking (not during search/camera rotation)
                                             prev_cx, prev_cy = self._last_santa_center
                                             jump_distance = abs(candidate_cx - prev_cx)
-                                            max_reasonable_jump = 250  # Increased from 150 to allow for faster movement
+                                            max_reasonable_jump = 250
                                             
                                             if jump_distance > max_reasonable_jump:
                                                 is_valid_candidate = False
                                                 if self._debug_log_counter % 10 == 0:
                                                     self.logger.info(f"[YOLO REJECT] Position jump too large: X={candidate_cx} (prev={prev_cx}, jump={jump_distance}px > {max_reasonable_jump}px) conf={confidence:.2f}")
                                         
-                                        # STATIC OBJECT FILTER: Reject detections that don't move (trees, decorations, etc.)
-                                        # Santa moves, static objects don't
-                                        # Apply during IDLE and tracking to validate across all consecutive detections
-                                        # Stop checking once we've committed to attack (load/fire/cooldown)
                                         if is_valid_candidate and self.search_state == "idle" and self.attack_phase == "idle":
-                                            # Add current position to movement history
                                             self._detection_movement_history.append((candidate_cx, candidate_cy))
                                             if len(self._detection_movement_history) > self._max_movement_history:
                                                 self._detection_movement_history.pop(0)
                                             
-                                            # Check if detection has moved enough over history (requires full 8-frame tracking)
-                                            # This ensures we validate movement across all consecutive detection frames before attacking
-                                            if len(self._detection_movement_history) >= 8:  # Check across full consecutive detection period
-                                                # Calculate total movement range
+                                            if len(self._detection_movement_history) >= 8:
                                                 x_positions = [pos[0] for pos in self._detection_movement_history]
                                                 y_positions = [pos[1] for pos in self._detection_movement_history]
                                                 x_range = max(x_positions) - min(x_positions)
@@ -1954,11 +1770,9 @@ class SantaMacro:
                                                 if total_movement < self._min_movement_pixels:
                                                     is_valid_candidate = False
                                                     self.logger.info(f"[YOLO REJECT] Static object detected (moved only {total_movement}px over 8 frames) - likely tree/decoration at X={candidate_cx}")
-                                                    # Reset consecutive detections to restart validation
                                                     self._consecutive_detections = 0
                                                     self._detection_movement_history.clear()
                                         
-                                        # Accept candidate if position is continuous OR we're searching
                                         if is_valid_candidate:
                                             if best_santa is None or confidence > best_santa['confidence']:
                                                 best_santa = {
@@ -1972,17 +1786,14 @@ class SantaMacro:
                         if self._debug_log_counter % 100 == 0:
                             self.logger.warning("[YOLO MODEL] Not loaded - cannot detect Santa")
                     
-                    # Debug: log detection result periodically
                     if self._debug_log_counter % 25 == 0:
                         if best_santa:
                             self.logger.info(f"[DEBUG] YOLO detected Santa: {best_santa}")
                         else:
                             self.logger.info("[DEBUG] YOLO detection returned None")
                     
-                    # Check if we've been stopped before processing Santa detection
                     if not self._running:
                         self.logger.info("[STOP] Stopping before processing Santa detection")
-                        # Release any held keys
                         if self._mouse_down:
                             self._send_mouse_click(down=False)
                             self._mouse_down = False
@@ -1995,16 +1806,11 @@ class SantaMacro:
                                 self.is_holding_arrow = False
                         break
                     
-                    # ============================================================
-                    # COOLDOWN COMPLETION CHECK - Run every frame
-                    # ============================================================
                     current_time = time.time()
                     
-                    # Check if cooldown is complete and Santa is detected - start new attack
                     if self.attack_phase == "cooldown" and best_santa:
                         phase_elapsed = current_time - self.attack_phase_start
                         if phase_elapsed >= self.megapow_cooldown_duration:
-                            # Cooldown complete and Santa detected - start new attack
                             with self.arrow_lock:
                                 if self.current_arrow_key is not None:
                                     pydirectinput.keyUp(self.current_arrow_key)
@@ -2024,66 +1830,50 @@ class SantaMacro:
                         santa_cx = x1 + w // 2
                         santa_cy = y1 + h // 2
                         
-                        # Track position history for prediction
                         self._position_history.append((santa_cx, santa_cy))
                         if len(self._position_history) > self._max_position_history:
                             self._position_history.pop(0)
                         
-                        # Calculate velocity for prediction
                         if len(self._position_history) >= 2:
                             dx = self._position_history[-1][0] - self._position_history[0][0]
                             dy = self._position_history[-1][1] - self._position_history[0][1]
                             frames = len(self._position_history)
                             vx = dx / frames
                             vy = dy / frames
-                            # Predict next position
                             self._predicted_position = (int(santa_cx + vx * 2), int(santa_cy + vy * 2))
                         
-                        if self._debug_log_counter % 10 == 0:  # Log every 10 frames
+                        if self._debug_log_counter % 10 == 0:
                             self.logger.info(f"[SANTA DETECTED] Position: ({santa_cx}, {santa_cy}), size: {w}x{h}, conf: {best_santa['confidence']:.2f}")
                         
-                        # Simple aiming: just aim at Santa's center - no complex lead calculations
                         target_x_roi = santa_cx
                         target_y_roi = santa_cy
                         
                         if self._debug_log_counter % 10 == 0:
                             self.logger.info(f"[AIM] Center of Santa")
                         
-                        # Convert ROI-relative coordinates to absolute screen coordinates
                         target_x = target_x_roi + self.roi["left"]
                         target_y = target_y_roi + self.roi["top"]
                         
-                        # Limit cursor to never go within 10px of the very top of screen
                         if target_y < 10:
                             target_y = 10
                         
-                        # Direct cursor positioning (fast, no interpolation)
                         ctypes.windll.user32.SetCursorPos(target_x, target_y)
-                        # Registration move for Roblox (GPO technique)
-                        ctypes.windll.user32.mouse_event(0x0001, 0, 1, 0, 0)  # MOUSEEVENTF_MOVE
+                        ctypes.windll.user32.mouse_event(0x0001, 0, 1, 0, 0)
                         
-                        # Update previous center for next frame
                         self._last_santa_center = (santa_cx, santa_cy)
                         
-                        # Move cursor to target using Roblox-compatible technique (same as GPO Santa.py)
-                        # 1. Move cursor to position
                         ctypes.windll.user32.SetCursorPos(target_x, target_y)
-                        # 2. Move cursor down by 1 pixel relatively to register with Roblox
-                        ctypes.windll.user32.mouse_event(0x0001, 0, 1, 0, 0)  # MOUSEEVENTF_MOVE
+                        ctypes.windll.user32.mouse_event(0x0001, 0, 1, 0, 0)
                         
                         if self._debug_log_counter % 10 == 0:
                             self.logger.info(f"[CURSOR MOVED] ROI: ({target_x_roi}, {target_y_roi}) -> Screen: ({target_x}, {target_y})")
                         
-                        # Camera control to keep Santa positioned RIGHT of center (GPO Santa.py style - smooth continuous hold)
-                        # Position Santa at 60% across screen (right of center) to give more tracking space
                         roi_center_x = self.roi["width"] // 2
-                        optimal_position = int(self.roi["width"] * 0.60)  # 60% across = right of center
+                        optimal_position = int(self.roi["width"] * 0.60)
                         offset_x = santa_cx - optimal_position
-                        move_threshold = self.roi["width"] * 0.30  # 30% deadzone (wide to prevent oscillation)
+                        move_threshold = self.roi["width"] * 0.30
                         
-                        # Update search state - found Santa, stop searching (like GPO Santa.py switches to tracking)
                         if self.search_state != "idle":
-                            # Release the search arrow key before switching to camera control
                             with self.arrow_lock:
                                 if self.current_arrow_key is not None:
                                     pydirectinput.keyUp(self.current_arrow_key)
@@ -2093,38 +1883,28 @@ class SantaMacro:
                                     self.is_holding_arrow = False
                             self.logger.info(f"[SEARCH] Santa found! Stopping search, switching to tracking")
                             self.search_state = "idle"
-                            # Disable position validation for 3 frames to let position stabilize after search
                             self._search_exit_frame = self._debug_log_counter
                         
-                        # Track which side Santa is on
                         if santa_cx < roi_center_x:
                             self.last_santa_side = "left"
                         else:
                             self.last_santa_side = "right"
                         
-                        # Log camera state every frame when Santa detected
                         if self._debug_log_counter % 5 == 0:
                             phase_status = f"[{self.attack_phase.upper()}]" if self.attack_phase != "idle" else "[IDLE]"
                             self.logger.info(f"[CAMERA DEBUG] {phase_status} Santa ROI X={santa_cx}, Optimal={optimal_position}, Offset={offset_x:.0f}, Threshold={move_threshold:.0f}")
                         
-                        # CAMERA CONTROL DURING ATTACK:
-                        # - If Santa is in LEFT 33% of screen → track left to prevent flying off-screen
-                        # - If Santa is in RIGHT 67% of screen → freeze camera (no movement needed)
                         
                         if self.attack_phase in ["load", "fire"]:
-                            # Check if Santa is in dangerous left zone (will fly off screen)
-                            left_danger_zone = int(self.roi["width"] * 0.33)  # Left 33% of screen
+                            left_danger_zone = int(self.roi["width"] * 0.33)
                             
                             if santa_cx < left_danger_zone:
-                                # Santa in left zone - track left to keep on screen
                                 with self.arrow_lock:
                                     if self.current_arrow_key != "left":
-                                        # Release other keys
                                         if self.current_arrow_key is not None:
                                             pydirectinput.keyUp(self.current_arrow_key)
                                             with self.keys_lock:
                                                 self.camera_keys_pressed.discard(self.current_arrow_key)
-                                        # Hold LEFT
                                         pydirectinput.keyDown("left")
                                         with self.keys_lock:
                                             self.camera_keys_pressed.add("left")
@@ -2132,7 +1912,6 @@ class SantaMacro:
                                         self.is_holding_arrow = True
                                         self.logger.info(f"[CAMERA TRACK] Santa at X={santa_cx} < {left_danger_zone} (LEFT ZONE) - tracking LEFT during {self.attack_phase.upper()}")
                             else:
-                                # Santa in safe zone - release camera keys
                                 with self.arrow_lock:
                                     if self.current_arrow_key is not None:
                                         pydirectinput.keyUp(self.current_arrow_key)
@@ -2142,7 +1921,6 @@ class SantaMacro:
                                         self.is_holding_arrow = False
                         
                         elif self.attack_phase == "cooldown":
-                            # Release all camera keys during cooldown
                             with self.arrow_lock:
                                 if self.current_arrow_key is not None:
                                     pydirectinput.keyUp(self.current_arrow_key)
@@ -2151,16 +1929,12 @@ class SantaMacro:
                                     self.current_arrow_key = None
                                     self.is_holding_arrow = False
                         
-                        # Attack sequence - Megapow attack cycle with 3 stages
                         self._last_detection_frame = self._debug_log_counter
-                        self._consecutive_detections += 1  # Increment consecutive detection counter
+                        self._consecutive_detections += 1
                         current_time = time.time()
                         
-                        # Check if we can start a new attack (idle or cooldown expired)
-                        # Wait for 8 consecutive detections AND confirm movement before attacking
                         can_start_attack = False
                         if self.attack_phase == "idle" and self._consecutive_detections >= 8:
-                            # Final movement validation before committing to attack
                             if len(self._detection_movement_history) >= 8:
                                 x_positions = [pos[0] for pos in self._detection_movement_history]
                                 total_movement = max(x_positions) - min(x_positions)
@@ -2173,17 +1947,13 @@ class SantaMacro:
                             else:
                                 can_start_attack = True
                         
-                        # CRITICAL: Check position safety BEFORE starting attack
-                        # Use TIGHT safe zone (center 50% = 25%-75%) to prevent Santa flying off during attack
                         if can_start_attack:
-                            safe_zone_left = int(self.roi["width"] * 0.25)   # Must be right of 25%
-                            safe_zone_right = int(self.roi["width"] * 0.75)  # Must be left of 75%
+                            safe_zone_left = int(self.roi["width"] * 0.25)
+                            safe_zone_right = int(self.roi["width"] * 0.75)
                             
                             if santa_cx < safe_zone_left:
-                                # Santa too far left - move camera LEFT to keep him on screen
                                 self.logger.info(f"[ATTACK BLOCKED] Santa at X={santa_cx} LEFT of safe zone (< {safe_zone_left}) - moving camera LEFT")
                                 can_start_attack = False
-                                # Hold LEFT to follow Santa leftward
                                 with self.arrow_lock:
                                     if self.current_arrow_key != "left":
                                         if self.current_arrow_key is not None:
@@ -2196,10 +1966,8 @@ class SantaMacro:
                                         self.current_arrow_key = "left"
                                         self.is_holding_arrow = True
                             elif santa_cx > safe_zone_right:
-                                # Santa too far right - move camera RIGHT to keep him on screen  
                                 self.logger.info(f"[ATTACK BLOCKED] Santa at X={santa_cx} RIGHT of safe zone (> {safe_zone_right}) - moving camera RIGHT")
                                 can_start_attack = False
-                                # Hold RIGHT to follow Santa rightward
                                 with self.arrow_lock:
                                     if self.current_arrow_key != "right":
                                         if self.current_arrow_key is not None:
@@ -2213,12 +1981,10 @@ class SantaMacro:
                                         self.is_holding_arrow = True
                         
                         if can_start_attack:
-                            # Check if Roblox is focused before attacking
                             if not self._is_roblox_focused():
                                 self.logger.warning("[ATTACK BLOCKED] Roblox not focused - click game window!")
-                                self._consecutive_detections = 0  # Reset to avoid spam
+                                self._consecutive_detections = 0
                             else:
-                                # Release camera control keys before starting LOAD
                                 with self.arrow_lock:
                                     if self.current_arrow_key is not None:
                                         key_to_release = self.current_arrow_key
@@ -2234,28 +2000,21 @@ class SantaMacro:
                                 self.attack_committed = False
                                 self.logger.info(f"[MEGAPOW] Stage 1: LOAD started (1.0s) - Santa detected!")
                         elif self.attack_phase == "cooldown":
-                            # Still in cooldown - just spam E
                             phase_elapsed = current_time - self.attack_phase_start
                             
-                            # Spam E key during cooldown (like GPO Santa.py)
                             pydirectinput.press('e')
                             if self._debug_log_counter % 10 == 0:
                                 remaining = self.megapow_cooldown_duration - phase_elapsed
                                 self.logger.info(f"[COOLDOWN] Spamming E during cooldown ({phase_elapsed:.1f}s/{self.megapow_cooldown_duration}s)")
                         
-                        # ============================================================
-                        # ATTACK PHASE EXECUTION - Run after cursor positioning
-                        # ============================================================
                         if self.attack_phase == "load":
                             phase_elapsed = current_time - self.attack_phase_start
                             
-                            # Press mouse button down during LOAD
                             if not self._mouse_down:
                                 self._send_mouse_click(down=True)
                                 self._mouse_down = True
                                 self.logger.info("[MOUSE] LEFT BUTTON DOWN (LOAD)")
                             
-                            # Check if LOAD duration elapsed
                             if phase_elapsed >= self.megapow_load_duration:
                                 self.attack_phase = "fire"
                                 self.attack_phase_start = current_time
@@ -2267,13 +2026,11 @@ class SantaMacro:
                         elif self.attack_phase == "fire":
                             phase_elapsed = current_time - self.attack_phase_start
                             
-                            # Keep mouse button down during FIRE
                             if not self._mouse_down:
                                 self._send_mouse_click(down=True)
                                 self._mouse_down = True
                                 self.logger.info("[MOUSE] LEFT BUTTON DOWN (FIRE)")
                             
-                            # Check if FIRE duration elapsed
                             if phase_elapsed >= self.megapow_fire_duration:
                                 if self._mouse_down:
                                     self._send_mouse_click(down=False)
@@ -2285,17 +2042,14 @@ class SantaMacro:
                             elif self._debug_log_counter % 25 == 0:
                                 self.logger.info(f"[MEGAPOW] Stage 2: FIRE ({phase_elapsed:.1f}s/{self.megapow_fire_duration}s)")
                         
-                        # Update overlay with absolute screen coordinates
                         if self.overlay_enabled:
                             self._update_fps()
-                            # Overlay expects (x, y, w, h) where x,y are absolute screen top-left
                             overlay_x = x1 + self.roi["left"]
                             overlay_y = y1 + self.roi["top"]
                             overlay_bbox = (overlay_x, overlay_y, w, h)
                             det = DetectionResult(bbox=overlay_bbox, confidence=best_santa['confidence'])
                             self._draw_overlay(frame_bgr, det, (target_x, target_y), attack_mode=self.attack_mode)
                     else:
-                        # Check if we've been stopped before processing grace period
                         if not self._running:
                             self.logger.info("[STOP] Stopping in no-detection branch")
                             if self._mouse_down:
@@ -2310,29 +2064,20 @@ class SantaMacro:
                                     self.is_holding_arrow = False
                             break
                         
-                        # No Santa detected - use grace period before releasing
-                        # Only activate grace if we've had at least ONE real detection
                         if self._last_detection_frame >= 0:
                             frames_since_detection = self._debug_log_counter - self._last_detection_frame
                         else:
-                            frames_since_detection = 9999  # No previous detection, skip grace
+                            frames_since_detection = 9999
                         
                         if frames_since_detection <= self._detection_grace_frames and self._last_detection_frame >= 0:
-                            # Still within grace period - continue attack at predicted position
-                            # KEEP MOUSE DOWN during load and fire phases only
                             if self.attack_phase in ["load", "fire"] and not self._mouse_down:
                                 self._send_mouse_click(down=True)
                                 self._mouse_down = True
                                 self.logger.info("[MOUSE] LEFT BUTTON DOWN (GRACE PERIOD)")
                             
-                            # Continue attack phase timing even during grace period
                             current_time = time.time()
                             phase_elapsed = current_time - self.attack_phase_start
                             
-                            # Stage transitions during grace period
-                            # DON'T transition LOAD -> FIRE during grace period (only with real detection)
-                            # This prevents shooting at nothing when Santa is lost during LOAD
-                            # ALSO DON'T restart attack cycles during grace period - only continue existing ones
                             if self.attack_phase == "fire" and phase_elapsed >= self.megapow_fire_duration:
                                 if self._mouse_down:
                                     self._send_mouse_click(down=False)
@@ -2342,75 +2087,56 @@ class SantaMacro:
                                 self.attack_phase_start = current_time
                                 self.logger.info("[MEGAPOW] Stage 2 complete (grace) -> Stage 3: COOLDOWN")
                             elif self.attack_phase == "cooldown":
-                                # Spam E during cooldown in grace period too
                                 pydirectinput.press('e')
                                 if self._debug_log_counter % 10 == 0:
                                     self.logger.info(f"[COOLDOWN] Spamming E during grace period cooldown")
                             
                             if self._predicted_position and frames_since_detection < 15:
-                                # Use predicted position for cursor (for first 15 frames)
                                 pred_x_roi, pred_y_roi = self._predicted_position
-                                # Convert ROI-relative to absolute screen coordinates
                                 pred_x = pred_x_roi + self.roi["left"]
                                 pred_y = pred_y_roi + self.roi["top"]
-                                # Clamp to screen bounds
                                 pred_x = max(self.monitor["left"], min(pred_x, self.monitor["left"] + self.monitor["width"]))
                                 pred_y = max(self.monitor["top"], min(pred_y, self.monitor["top"] + self.monitor["height"]))
-                                # Use same Roblox-compatible method as regular cursor movement
                                 ctypes.windll.user32.SetCursorPos(pred_x, pred_y)
-                                ctypes.windll.user32.mouse_event(0x0001, 0, 1, 0, 0)  # MOUSEEVENTF_MOVE
+                                ctypes.windll.user32.mouse_event(0x0001, 0, 1, 0, 0)
                                 if self._debug_log_counter % 25 == 0:
                                     self.logger.info(f"[GRACE] Tracking predicted position ({frames_since_detection}/{self._detection_grace_frames})")
                             elif self._debug_log_counter % 25 == 0:
                                 self.logger.info(f"[GRACE] Keeping lock ({frames_since_detection}/{self._detection_grace_frames} frames)")
                         else:
-                            # Grace period expired - release everything and START SEARCHING
-                            self._consecutive_detections = 0  # Reset consecutive counter when losing Santa
-                            # Reset position tracking since we lost Santa for a while
+                            self._consecutive_detections = 0
                             if self._last_santa_center is not None:
                                 self._last_santa_center = None
                                 self.logger.info("[POSITION RESET] Grace expired, clearing old position data")
-                            # Clear movement history when losing Santa
                             self._detection_movement_history.clear()
                             if self._debug_log_counter % 50 == 0:
                                 self.logger.info("[SEARCHING] Looking for Santa...")
                             
-                            # Release left mouse button (only once)
                             if self._mouse_down:
                                 self._send_mouse_click(down=False)
                                 self._mouse_down = False
                                 self.logger.info("[ATTACKING] Left mouse up - lost Santa")
                                 
-                                # CONDITIONAL COOLDOWN:
-                                # If we were interrupted during LOAD stage (not committed), can restart immediately
-                                # If we passed LOAD stage (committed), must complete cooldown
                                 if self.attack_committed:
-                                    # Committed to attack - enforce cooldown
                                     if self.attack_phase != "cooldown":
                                         self.attack_phase = "cooldown"
                                         self.attack_phase_start = time.time()
                                         self.logger.info("[MEGAPOW] Attack interrupted after commitment -> Cooldown enforced (5.2s)")
                                 else:
-                                    # Not committed (stopped during load) - can restart immediately
                                     self.attack_phase = "idle"
                                     self.attack_committed = False
                                     self.logger.info("[MEGAPOW] Interrupted during LOAD -> No cooldown, can restart immediately")
                                 
-                                # Record kill time for E spam sequence (like GPO Santa.py)
                                 self.last_kill_time = time.time()
                                 self.logger.info("[LOOT] Starting E spam sequence...")
                             
-                            # Spam E key for loot collection (like GPO Santa.py)
                             time_since_kill = time.time() - self.last_kill_time
                             if time_since_kill < self.e_spam_duration:
-                                # Spam E every frame during the spam duration
                                 pydirectinput.press('e')
                                 if self._debug_log_counter % 10 == 0:
                                     self.logger.info(f"[LOOT] Spamming E ({time_since_kill:.1f}s/{self.e_spam_duration}s)")
                             
-                            # Switch to search mode if not already searching (only once)
                             if self.search_state == "idle":
-                                # Release any held arrow keys before starting new search
                                 with self.arrow_lock:
                                     if self.current_arrow_key:
                                         pydirectinput.keyUp(self.current_arrow_key)
@@ -2419,30 +2145,24 @@ class SantaMacro:
                                         self.current_arrow_key = None
                                 self.is_holding_arrow = False
                                 
-                                # Reset attack phase to idle when starting search
                                 if self.attack_phase == "cooldown":
                                     self.attack_phase = "idle"
                                     self.attack_committed = False
                                     self.logger.info("[SEARCH] Resetting attack phase to idle for new search")
                                 
-                                # Reset position tracking - camera will rotate, old position is meaningless
                                 self._last_santa_center = None
-                                # Reset movement history - starting fresh search
                                 self._detection_movement_history.clear()
                                 
-                                # Determine search direction based on last known position
                                 if self.last_santa_side == "left":
                                     self.search_state = "searching_left"
                                     self.logger.info(f"[SEARCH] Santa lost (last seen: LEFT), will search left...")
                                 else:
                                     self.search_state = "searching_right"
                                     self.logger.info(f"[SEARCH] Santa lost (last seen: RIGHT), will search right...")
-                            # Note: Search movement executes at top of loop, not here
                             self._predicted_position = None
                             self._position_history.clear()
                             self._smoothed_cursor_pos = None
                         
-                        # Update overlay
                         if self.overlay_enabled:
                             self._update_fps()
                             det = DetectionResult(bbox=None, confidence=0.0)
@@ -2451,46 +2171,35 @@ class SantaMacro:
                     self._debug_log_counter += 1
                     time.sleep(self.tick_interval)
                     continue
-                # ============================================================
 
-                # ============================================================
-                # SMART TRACKING SYSTEM WITH LEARNING
-                # ============================================================
                 det = DetectionResult(bbox=None, confidence=0.0)
                 
-                # State 1: LEARNING PHASE - Collect Santa data for 10 seconds
                 if self.lock_on_enabled and not self._locked_santa and self._learning_start_ts is None:
-                    # Check if we have a detection to start learning
                     if self.det_mode == "motion":
                         color_det = self._detect_motion_color(frame_bgr)
                         if color_det and color_det.bbox:
                             x, y, w, h = color_det.bbox
-                            # Initial size filtering
                             if w >= self.min_santa_size and h >= self.min_santa_size:
                                 self._start_learning_phase()
                                 det = color_det
                             else:
-                                if self._debug_log_counter % 50 == 0:  # Throttled logging
+                                if self._debug_log_counter % 50 == 0:
                                     self.logger.debug("Skipping small detection during search: %dx%d", w, h)
                     else:
-                        # Template/hybrid mode
                         det = self._match_templates(frame_gray) if self.det_mode == "template" else self._detect_motion(frame_gray)
                         if det.bbox:
                             self._start_learning_phase()
                 
-                # State 2: LEARNING PHASE ACTIVE - Gathering Santa profile
                 elif self.state == MacroState.LEARNING:
                     elapsed = time.time() - self._learning_start_ts
                     
                     if elapsed < self.learning_duration:
-                        # Continue learning - gather samples
                         if self.det_mode == "motion":
                             color_det = self._detect_motion_color(frame_bgr)
                             if color_det and color_det.bbox:
                                 det = color_det
                                 self._process_learning_sample(det.bbox, frame_bgr, det.confidence)
                             else:
-                                # Lost detection during learning - be permissive
                                 if self._debug_log_counter % 25 == 0:
                                     self.logger.debug("Learning: temporary detection loss")
                         else:
@@ -2498,42 +2207,33 @@ class SantaMacro:
                             if det.bbox:
                                 self._process_learning_sample(det.bbox, frame_bgr, det.confidence)
                     else:
-                        # Learning complete - finalize and lock on
                         self._finalize_learning()
                 
-                # State 3: LOCKED ON - Use learned profile to filter detections
                 elif self._locked_santa:
                     self.state = MacroState.DETECTING
                     
-                    # Get detection
                     if self.det_mode == "motion":
                         color_det = self._detect_motion_color(frame_bgr)
                         if color_det and color_det.bbox:
-                            # Validate against Santa profile
                             is_valid, rejection_reason = self._validate_detection(color_det.bbox, frame_bgr)
                             
                             if is_valid:
                                 det = color_det
                                 self._update_santa_tracking(det.bbox)
                                 self._rejected_detections_count = 0
-                                # Log acceptance occasionally
                                 if self._debug_log_counter % 25 == 0:
                                     x, y, w, h = det.bbox
                                     self.logger.debug("✓ Validated: %dx%d at (%d,%d) conf=%.2f (consecutive: %d)", 
                                                      w, h, x, y, det.confidence, self._postlock_consecutive_valid)
                             else:
-                                # Rejected detection
                                 self._rejected_detections_count += 1
                                 self._reset_postlock_valid()
-                                # Log rejection with full details (every rejection for first 10, then throttled)
                                 if self._rejected_detections_count <= 10 or self._rejected_detections_count % 5 == 0:
                                     x, y, w, h = color_det.bbox
                                     self.logger.info("✗ REJECT #%d: %dx%d at (%d,%d) - %s", 
                                                    self._rejected_detections_count, w, h, x, y, rejection_reason)
                                 
-                                # Use prediction if we have recent tracking
                                 if self._predicted_position and self._rejected_detections_count < 15:
-                                    # Create predicted bbox based on last known size
                                     if self._last_santa_center:
                                         avg_size = (self._santa_profile.size_min + self._santa_profile.size_max) // 2
                                         pred_x = self._predicted_position[0] - avg_size // 2
@@ -2545,7 +2245,6 @@ class SantaMacro:
                                         if self._debug_log_counter % 25 == 0:
                                             self.logger.debug("Using prediction: %s", det.bbox)
                         else:
-                            # No detection - use prediction or check camera control
                             if self._predicted_position and self._rejected_detections_count < 20:
                                 avg_size = (self._santa_profile.size_min + self._santa_profile.size_max) // 2
                                 pred_x = self._predicted_position[0] - avg_size // 2
@@ -2555,7 +2254,6 @@ class SantaMacro:
                                     confidence=0.4
                                 )
                                 
-                                # Check if camera control needed
                                 if self._check_camera_control_needed(det.bbox):
                                     self.state = MacroState.CAMERA_TRACKING
                                     self._perform_camera_drag(pred_x)
@@ -2563,7 +2261,6 @@ class SantaMacro:
                                 if self._debug_log_counter % 25 == 0:
                                     self.logger.debug("No detection, using prediction: %s", det.bbox)
                             else:
-                                # Lost tracking completely
                                 if self._rejected_detections_count >= 50:
                                     self.logger.warning("⚠️ Lost Santa - resetting lock (rejected %d times)", 
                                                        self._rejected_detections_count)
@@ -2575,7 +2272,6 @@ class SantaMacro:
                                     self.logger.debug("Searching for Santa... (rejected %d)", 
                                                      self._rejected_detections_count)
                     else:
-                        # Template/hybrid mode with validation
                         det_raw = self._match_templates(frame_gray) if self.det_mode == "template" else self._detect_motion(frame_gray)
                         if det_raw.bbox:
                             is_valid, rejection_reason = self._validate_detection(det_raw.bbox, frame_bgr)
@@ -2588,7 +2284,6 @@ class SantaMacro:
                                 if self._debug_log_counter % 10 == 0:
                                     self.logger.info("✗ Rejected: %s", rejection_reason)
                     
-                    # Stop camera drag if Santa is back in view
                     if det.bbox and self._camera_drag_active:
                         x, y, w, h = det.bbox
                         distance_from_left = x - self.monitor["left"]
@@ -2596,11 +2291,9 @@ class SantaMacro:
                             self._stop_camera_drag()
                             self.state = MacroState.DETECTING
                 
-                # State 4: SEARCHING - No lock-on active
                 else:
                     self.state = MacroState.DETECTING
                     
-                    # Normal detection without learning/filtering
                     if self.det_mode == "motion":
                         color_det = self._detect_motion_color(frame_bgr)
                         if color_det:
@@ -2610,7 +2303,6 @@ class SantaMacro:
                     elif self.det_mode == "template":
                         det = self._match_templates(frame_gray)
                     else:
-                        # Hybrid
                         det_t = self._match_templates(frame_gray)
                         if det_t.bbox and det_t.confidence >= self.threshold:
                             det = det_t
@@ -2619,24 +2311,17 @@ class SantaMacro:
                 
                 self._debug_log_counter += 1
                 
-                # ============================================================
-                # LOCK-ON TRACKING SYSTEM (OLD - KEPT FOR SHOOT PHASE)
-                # ============================================================
-                # Check for lock-on timeout (30 seconds)
                 if self._locked_on_santa and self._lock_start_ts:
                     lock_duration = time.time() - self._lock_start_ts
                     if lock_duration > self._lock_timeout_seconds:
                         self._release_lock_on(f"Timeout after {lock_duration:.1f}s")
                 
-                # If locked on, use tracker ONLY - ignore all new detections
                 det = DetectionResult(bbox=None, confidence=0.0)
                 
                 if self._locked_on_santa:
-                    # LOCKED MODE: Use tracker to follow Santa, ignore all new detections
                     self.state = MacroState.DETECTING
                     self.logger.debug("LOCKED ON SANTA - Using tracker only")
                     
-                    # Try tracking methods
                     track_box = None
                     if self._shoot_tracker is not None:
                         track_box = self._update_shoot_tracker(frame_bgr)
@@ -2644,47 +2329,38 @@ class SantaMacro:
                         track_box = self._update_shoot_template(frame_bgr)
                     
                     if track_box is not None:
-                        # Validate tracking box
                         if self._is_valid_track_box(frame_bgr, track_box):
-                            # Check if Santa left the screen
                             if self._check_santa_left_screen(track_box):
                                 self._release_lock_on("Santa left screen")
                                 det = DetectionResult(bbox=None, confidence=0.0)
                             else:
-                                # Valid tracking - keep locked on
                                 det = DetectionResult(bbox=track_box, confidence=0.95)
                                 self._update_lock_on(track_box)
                                 self.logger.debug("LOCKED TRACKING: bbox=%s", track_box)
                         else:
-                            # Invalid tracking box - try to recover with color detection
                             self.logger.warning("Tracker gave invalid box, attempting recovery")
-                            # First try WIDE color search across entire ROI to find where Santa moved
                             wide_color_det = self._detect_motion_color(frame_bgr)
                             if wide_color_det and wide_color_det.bbox:
                                 ww, wh = wide_color_det.bbox[2], wide_color_det.bbox[3]
                                 if ww >= 30 and wh >= 30:
-                                    # Found Santa with wide search - update lock
                                     det = wide_color_det
                                     self._update_lock_on(wide_color_det.bbox)
                                     self._init_shoot_tracker(frame_bgr, wide_color_det.bbox)
                                     self._init_shoot_template(frame_bgr, wide_color_det.bbox)
                                     self.logger.info("Recovered lock with WIDE color search (w=%d, h=%d)", ww, wh)
                                 else:
-                                    # Too small - release lock only if in cooldown
                                     if self._click_cycle_phase in ("load", "shoot"):
                                         self.logger.warning("Wide search found small object %dx%d - continuing with grace period", ww, wh)
                                         det = DetectionResult(bbox=None, confidence=0.0)
                                     else:
                                         self._release_lock_on(f"Lost Santa (wide search too small {ww}x{wh})")
                             else:
-                                # Wide search failed - release lock only if in cooldown
                                 if self._click_cycle_phase in ("load", "shoot"):
                                     self.logger.warning("Tracker failed - wide search failed - continuing with grace period during %s phase", self._click_cycle_phase)
                                     det = DetectionResult(bbox=None, confidence=0.0)
                                 else:
                                     self._release_lock_on("Lost Santa (tracker failed, wide search failed)")
                 else:
-                    # SEARCHING MODE: Look for Santa with normal detection
                     self.state = MacroState.DETECTING
                     self.logger.debug("SEARCHING for Santa")
                     
@@ -2696,16 +2372,13 @@ class SantaMacro:
                             det = DetectionResult(bbox=None, confidence=0.0)
                     elif self.det_mode == "motion":
                         try:
-                            # Prefer color detection (red sleigh) for initial detection
                             color_det = self._detect_motion_color(frame_bgr)
                             if color_det is not None:
                                 self.logger.info("Found red sleigh color detection, using it (conf=%.2f)", color_det.confidence)
                                 det = color_det
                             else:
-                                # Fall back to motion detection
                                 det = self._detect_motion(frame_gray)
                                 
-                                # Reject large motion blobs (buildings)
                                 if det.bbox is not None:
                                     _, _, w, h = det.bbox
                                     det_area = w * h
@@ -2727,22 +2400,18 @@ class SantaMacro:
                             self.logger.error("Hybrid detection error: %s", e)
                             det = DetectionResult(bbox=None, confidence=0.0)
                     
-                    # If we found Santa, try to initiate lock-on (but don't require it)
                     if det.bbox is not None and det.confidence > 0.5:
-                        if not self._locked_on_santa:  # Only try to lock if not already locked
+                        if not self._locked_on_santa:
                             if self._initiate_lock_on(det.bbox):
-                                # Lock-on accepted - initialize trackers
                                 self._init_shoot_tracker(frame_bgr, det.bbox)
                                 self._init_shoot_template(frame_bgr, det.bbox)
                                 self._shoot_ref_bbox = det.bbox
                                 self.logger.info("Santa detected and locked on!")
                             else:
-                                # Lock-on rejected but continue tracking normally
                                 self.logger.debug("Lock-on validation failed, continuing with normal tracking")
                 
                 self._ema_conf = self._ema(self._ema_conf, det.confidence, self.ema_alpha)
                 
-                # Learning mode: log and adapt
                 if self.learning_enabled and det.bbox is not None:
                     self._learning_detections.append({
                         "ts": time.time(),
@@ -2756,7 +2425,6 @@ class SantaMacro:
                         path = os.path.join(self.learning_sample_dir, f"detect_{ts}_{det.confidence:.2f}.png")
                         cv2.imwrite(path, frame_bgr)
                     
-                    # Auto-adjust threshold based on recent detections
                     if self.learning_auto_adjust and len(self._learning_detections) > 50:
                         recent = [d["conf"] for d in self._learning_detections[-50:]]
                         avg_conf = sum(recent) / len(recent)
@@ -2768,29 +2436,22 @@ class SantaMacro:
                             self.logger.info("Learning: threshold decreased to %.2f", self.threshold)
                         self._learning_detections = self._learning_detections[-50:]
                 
-                # ============================================================
-                # AIMING WITH LOCK-ON
-                # ============================================================
                 aim = None
                 
                 self.logger.info("FRAME: phase=%s locked=%s det.bbox=%s conf=%.2f", 
                                 self._click_cycle_phase, self._locked_on_santa, det.bbox, det.confidence)
                 
                 if det.bbox is not None:
-                    # We have a valid detection (either from search or locked tracking)
                     center = self._aim_point(det.bbox)
                     self._ema_center = self._ema_pt(self._ema_center, center, self.ema_alpha)
                     aim = (int(self._ema_center[0]), int(self._ema_center[1]))
                     self._last_valid_bbox = det.bbox
                     self._last_detection_ts = time.time()
                     
-                    # CENTER DEADZONE SAFETY CHECK: Only before starting cycle, not during shoot
-                    # Santa flies around edges, not center - check before committing to shoot
                     if self._click_cycle_phase == "load" and self._click_cycle_start_ts is None:
                         screen_center_x = self.monitor["left"] + self.monitor["width"] // 2
                         screen_center_y = self.monitor["top"] + self.monitor["height"] // 2
                         
-                        # Define center deadzone as 30% of screen width/height
                         deadzone_w = int(self.monitor["width"] * 0.3)
                         deadzone_h = int(self.monitor["height"] * 0.3)
                         
@@ -2798,13 +2459,11 @@ class SantaMacro:
                         dist_from_center_y = abs(aim[1] - screen_center_y)
                         
                         if dist_from_center_x < deadzone_w // 2 and dist_from_center_y < deadzone_h // 2:
-                            # Target is in center deadzone BEFORE starting - likely particles!
                             self.logger.warning("REJECTING START: Target in center deadzone (%.1f, %.1f from center) - likely particles!", 
                                               dist_from_center_x, dist_from_center_y)
-                            # Don't start cycle - wait for Santa at edges
                             det = DetectionResult(bbox=None, confidence=0.0)
                             aim = None
-                            self._santa_confirm_start_ts = None  # Reset confirmation
+                            self._santa_confirm_start_ts = None
                     
                     if aim and self._locked_on_santa:
                         self.logger.info("LOCKED AIM: bbox=%s -> aim=%s", det.bbox, aim)
@@ -2812,18 +2471,15 @@ class SantaMacro:
                         self.logger.info("AIM: bbox=%s -> aim=%s", det.bbox, aim)
                 
                 elif self._click_cycle_phase == "shoot" and self._last_valid_bbox is not None:
-                    # SHOOT PHASE: Keep aiming at last known position (lock-on handles updates)
-                    # Use prediction to lead the target slightly
                     last_center = self._aim_point(self._last_valid_bbox)
                     
-                    # Apply velocity prediction if we have history
                     if len(self._santa_bbox_history) >= 2:
                         prev_bbox = self._santa_bbox_history[-2]
                         curr_bbox = self._santa_bbox_history[-1]
                         prev_center = self._aim_point(prev_bbox)
                         curr_center = self._aim_point(curr_bbox)
                         
-                        vx = (curr_center[0] - prev_center[0]) * 2.0  # Amplify for prediction
+                        vx = (curr_center[0] - prev_center[0]) * 2.0
                         vy = (curr_center[1] - prev_center[1]) * 2.0
                         
                         pred_x = curr_center[0] + vx
@@ -2836,10 +2492,8 @@ class SantaMacro:
                         self.logger.debug("SHOOT: aim=%s", aim)
                 
                 else:
-                    # No detection and not in shoot phase - don't aim anywhere
                     self.logger.info("NO AIM: det.bbox=%s locked=%s phase=%s", det.bbox, self._locked_on_santa, self._click_cycle_phase)
 
-                # Aiming and click management
                 if aim and det.bbox is not None:
                     cur = pyautogui.position()
                     self.logger.info("AIM: det_bbox=%s calculated_aim=%s cursor_before=%s", det.bbox, aim, (cur.x, cur.y))
@@ -2851,19 +2505,15 @@ class SantaMacro:
                     if self.clicks_enabled:
                         moving_ok = self._is_moving_naturally()
                         
-                        # Debug override to skip movement validation
                         if self.click_skip_movement_validation:
                             moving_ok = True
                             self.logger.debug("Movement validation SKIPPED (debug mode)")
 
-                        # Initialize cycle after confirming Santa for 1.5 seconds
                         if self._click_cycle_start_ts is None and det.bbox is not None:
-                            # Start confirmation timer on first detection
                             if self._santa_confirm_start_ts is None:
                                 self._santa_confirm_start_ts = time.time()
                                 self.logger.info("SANTA DETECTION: Starting confirmation timer")
                             
-                            # Check if we've confirmed Santa for long enough
                             confirm_elapsed = time.time() - self._santa_confirm_start_ts
                             if confirm_elapsed >= self._santa_confirm_duration:
                                 self._click_cycle_start_ts = time.time()
@@ -2872,25 +2522,19 @@ class SantaMacro:
                             else:
                                 self.logger.debug("Confirming Santa: %.1f/%.1fs", confirm_elapsed, self._santa_confirm_duration)
                         elif det.bbox is None:
-                            # Lost detection - reset confirmation
                             if self._santa_confirm_start_ts is not None:
                                 self.logger.debug("Lost Santa during confirmation - resetting")
                                 self._santa_confirm_start_ts = None
 
-                        # Cycle timing
                         phase_elapsed = 0.0
                         if self._click_cycle_start_ts is not None:
                             phase_elapsed = (time.time() - self._click_cycle_start_ts) * 1000.0
 
-                        # Transition: cooldown -> detection (after cooldown completes, reset and wait for new confirmation)
                         if self._click_cycle_phase == "cooldown" and self._click_cycle_start_ts is not None and phase_elapsed >= self.click_cooldown_ms:
-                            # Cooldown finished - reset cycle and wait for new Santa confirmation
                             self._click_cycle_phase = "cooldown"
                             self._click_cycle_start_ts = None
                             self.logger.info("PHASE: cooldown complete - resetting to detect new Santa")
-                        # Transition: load -> shoot
                         elif self._click_cycle_phase == "load" and phase_elapsed >= self.click_load_ms:
-                            # Transition to shoot if we have any valid tracking
                             if self._last_valid_bbox is not None:
                                 self._click_cycle_phase = "shoot"
                                 self._click_cycle_start_ts = time.time()
@@ -2901,9 +2545,7 @@ class SantaMacro:
                                 else:
                                     self.logger.info("PHASE: load->shoot (TRACKING)")
                             else:
-                                # No valid target, stay in load phase
                                 self.logger.debug("Staying in LOAD phase - no valid target yet")
-                        # Transition: shoot -> cooldown
                         elif self._click_cycle_phase == "shoot" and phase_elapsed >= self.click_shoot_ms:
                             if self._mouse_down:
                                 self._click_up()
@@ -2911,24 +2553,17 @@ class SantaMacro:
                             self._click_cycle_start_ts = time.time()
                             phase_elapsed = 0
                             self._locked_aim_point = None
-                            self._last_e_press_ts = None  # Reset E spam timer
-                            # Keep lock-on for next cycle - only release when Santa leaves or timeout
-                            # self._release_lock_on("Shoot phase complete")  # DON'T release - stay locked!
+                            self._last_e_press_ts = None
                             self.logger.info("PHASE: shoot->cooldown (STAYING LOCKED for next cycle)")
 
-                        # Click during load and shoot phases only
-                        # Allow clicking even if movement not strongly detected on first few frames
                         cycles_active = 0.0
                         if self._click_cycle_start_ts is not None:
                             cycles_active = time.time() - self._click_cycle_start_ts
                         
-                        # Determine if we should click: either strict movement check OR always spam during shoot
                         if self.click_always_spam and self._click_cycle_phase == "shoot":
-                            # SPAM MODE: Always click during shoot phase regardless of movement
                             allow_click = True
                             self.logger.debug("Click gating: spam_mode=True -> allow_click=True")
                         else:
-                            # Normal mode: require movement or be in first 500ms of cycle
                             allow_click = moving_ok or (cycles_active < 0.5)
                             self.logger.debug("Click gating: moving_ok=%s cycles_active=%.2fs -> allow_click=%s", moving_ok, cycles_active, allow_click)
                         
@@ -2943,29 +2578,23 @@ class SantaMacro:
 
                     self.state = MacroState.CLICKING if self.clicks_enabled else MacroState.DETECTING
                 
-                # Handle case where detection is lost
                 elif det.bbox is None and self.clicks_enabled:
-                    # Give grace period for brief detection losses (shooting animations, etc.)
                     if self._last_detection_ts is None:
                         self._last_detection_ts = time.time()
                     
                     time_since_detection = time.time() - self._last_detection_ts
-                    grace_period = 1.0  # 1 second tolerance for brief detection loss
+                    grace_period = 1.0
                     
-                    # Detection lost - but give grace period during active phases
                     if self._click_cycle_phase in ("load", "shoot") and time_since_detection < grace_period:
-                        # Still in grace period - keep going with last known position
                         if self._last_valid_bbox is not None:
                             aim = self._aim_point(self._last_valid_bbox)
                             self._move_mouse_towards(aim)
                         self.logger.debug("Detection lost temporarily (%.1fs) - continuing in grace period", time_since_detection)
                     elif time_since_detection >= grace_period:
-                        # Grace period expired - reset cycle
                         if self._mouse_down:
                             self._click_up()
                             self.logger.info("Detection lost for %.1fs - releasing mouse button", time_since_detection)
                         
-                        # Reset cycle to wait for new detection
                         if self._click_cycle_start_ts is not None:
                             self._click_cycle_start_ts = None
                             self._click_cycle_phase = "cooldown"
@@ -2974,32 +2603,27 @@ class SantaMacro:
                     
                     self.state = MacroState.DETECTING
 
-                # SPAM E KEY DURING COOLDOWN PHASE (always runs regardless of detection)
                 if self.clicks_enabled and self._click_cycle_phase == "cooldown" and self._click_cycle_start_ts is not None:
                     now = time.time()
                     phase_elapsed = (now - self._click_cycle_start_ts) * 1000.0
                     if self._last_e_press_ts is None or (now - self._last_e_press_ts) >= self._e_spam_interval:
-                        # Press and release E key using pynput
                         kbd = keyboard.Controller()
                         kbd.press('e')
                         kbd.release('e')
                         self._last_e_press_ts = now
                         self.logger.info("COOLDOWN: Pressed E key (%.1fs into cooldown)", phase_elapsed / 1000.0)
 
-                # Overlay and telemetry
                 self._update_fps()
                 if self.overlay_enabled:
                     self._draw_overlay(frame_bgr, det, aim)
                 self._save_dump_if_needed(frame_bgr, det)
 
-                # Timing
                 elapsed = time.time() - start_ts
                 remain = max(0.0, self.tick_interval - elapsed)
                 time.sleep(remain)
         finally:
             if self._mouse_down:
                 self._click_up()
-            # Release all arrow keys on exit
             try:
                 with self.arrow_lock:
                     pydirectinput.keyUp('left')
