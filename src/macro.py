@@ -338,10 +338,8 @@ class SantaMacro:
         logger = logging.getLogger("SantaMacro")
         level = getattr(logging, log_cfg.get("level", "INFO"))
         logger.setLevel(level)
-        fh = RotatingFileHandler(log_cfg.get("file", "logs/santa_macro.log"), maxBytes=int(log_cfg.get("max_bytes", 1048576)), backupCount=int(log_cfg.get("backup_count", 3)))
+        # Only console logging - no file logging
         fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-        fh.setFormatter(fmt)
-        logger.addHandler(fh)
         sh = logging.StreamHandler()
         sh.setFormatter(fmt)
         logger.addHandler(sh)
