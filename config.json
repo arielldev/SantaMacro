@@ -42,7 +42,8 @@
     "mode": "first_person",
     "mouse_sensitivity": 0.3,
     "center_deadzone_fraction": 0.1,
-    "follow_santa": true
+    "follow_santa": true,
+    "initial_zoom_in": 5
   },
   "aiming": {
     "mouse_smooth_factor": 0.20,
