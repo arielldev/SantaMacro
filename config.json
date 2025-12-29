@@ -1,0 +1,105 @@
+{
+  "capture": {
+    "monitor_index": 1,
+    "roi_fraction": { "top": 0.1, "height": 0.4, "left": 0.15, "width": 0.70 },
+    "ignore_top_fraction": 0.18,
+    "ignore_middle_zone": { "enabled": false, "left_frac": 0.35, "right_frac": 0.65, "top_frac": 0.0, "height_frac": 0.35 },
+    "grayscale": true,
+    "ignore_zones": [
+      { "left_frac": 0.00, "top_frac": 0.60, "width_frac": 0.28, "height_frac": 0.40 }
+    ]
+  },
+  "detection": {
+    "mode": "color",
+    "yolo_model_path": "Model.pt",
+    "templates": [
+      "templates/*.png"
+    ],
+    "scales": [0.7, 0.8, 0.9, 1.0, 1.1],
+    "method": "TM_CCOEFF_NORMED",
+      "threshold": 0.12,
+      "ema_alpha": 0.60,
+    "motion": {
+        "enabled": true,
+        "min_area": 30,
+        "blur_kernel": 7,
+        "diff_threshold": 6,
+        "morph_kernel": 5,
+        "use_color_detection": true
+    }
+  },
+  "smart_tracking": {
+    "enabled": true,
+    "learning_duration_seconds": 15.0,
+    "min_santa_size_px": 25,
+    "max_santa_size_px": 300,
+    "size_tolerance": 0.5,
+    "max_position_jump_px": 150,
+    "color_similarity_threshold": 0.6
+  },
+  "camera_control": {
+    "enabled": true,
+    "mode": "first_person",
+    "mouse_sensitivity": 0.3,
+    "center_deadzone_fraction": 0.1,
+    "follow_santa": true
+  },
+  "aiming": {
+    "mouse_smooth_factor": 0.20,
+    "max_mouse_speed_px": 1200,
+    "tracking_stickiness_ms": 1500,
+    "max_click_duration_ms": 4000,
+    "reentry_delay_ms": 250,
+    "cooldown_after_loss_ms": 500,
+    "clamp_to_screen": true
+  },
+  "loop": {
+    "tick_hz": 25,
+    "idle_backoff_ms": 25
+  },
+  "overlay": {
+    "enabled": true,
+    "show_fps": true,
+    "window_title": "SantaMacro Overlay",
+    "engine": "qt",
+    "click_through": false,
+    "topmost": true,
+    "draw_frame": false,
+    "status_bar_mode": true,
+    "save_low_conf_frames": false,
+    "low_conf_dump_threshold": 0.55,
+    "dump_dir": "logs/dumps"
+  },
+  "clicks": {
+    "enabled": true,
+    "load_ms": 1000,
+    "shoot_ms": 5000,
+    "cooldown_ms": 6000,
+    "min_movement_px_per_sec": 0.0,
+    "skip_movement_validation": true,
+    "always_click_during_shoot": true,
+    "shoot_accept_conf": 0.08,
+    "prefer_color_during_shoot": true,
+    "shoot_ignore_radius_px": 180
+  },
+  "hotkeys": {
+    "toggle": "f1",
+    "shutdown": "esc"
+  },
+  "learning": {
+    "enabled": false,
+    "auto_adjust_threshold": true,
+    "log_detections": true,
+    "save_samples": true,
+    "sample_dir": "logs/learning"
+  },
+  "safety": {
+    "require_foreground": false
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "logs/santa_macro.log",
+    "max_bytes": 1048576,
+    "backup_count": 3
+  }
+}
