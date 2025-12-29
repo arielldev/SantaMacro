@@ -8,7 +8,7 @@
 
 ## 🎯 What is Santa Macro?
 
-Santa Macro is a **fully open-source** automation tool designed for Grand Piece Online Santa event. Unlike sketchy closed-source macros that get flagged as viruses, SantaMacro is:
+Santa Macro is a **fully open-source** automation tool designed for Grand Piece Online Santa event. Unlike sketchy closed-source macros that get flagged as viruses, SantaMacro is :
 
 - ✅ **Fully open source** - Verify every line of code yourself
 - ✅ **No viruses** - Clean, transparent, and safe
