@@ -5,8 +5,40 @@ from typing import Optional, Tuple
 import numpy as np
 import cv2
 from PySide6.QtCore import Qt, QRect, QRectF
-from PySide6.QtGui import QImage, QPixmap, QPainter, QColor, QFont, QPen, QLinearGradient, QPainterPath
+from PySide6.QtGui import QImage, QPixmap, QPainter, QColor, QFont, QPen, QLinearGradient, QPainterPath, QMouseEvent
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
+
+
+class ClickableWidget(QWidget):
+    """Widget that can detect mouse clicks on attack mode buttons"""
+    def __init__(self):
+        super().__init__()
+        self.overlay = None
+    
+    def set_overlay(self, overlay):
+        self.overlay = overlay
+    
+    def mousePressEvent(self, event: QMouseEvent):
+        if self.overlay and event.button() == Qt.LeftButton:
+            x, y = event.pos().x(), event.pos().y()
+            # Check if click is on megapow button
+            if self.overlay.megapow_button_rect:
+                rect = self.overlay.megapow_button_rect
+                if rect[0] <= x <= rect[0] + rect[2] and rect[1] <= y <= rect[1] + rect[3]:
+                    if self.overlay.attack_mode_callback:
+                        self.overlay.attack_mode_callback("megapow")
+                    self.raise_()  # Keep on top
+                    self.activateWindow()
+                    return
+            # Check if click is on cyborg button
+            if self.overlay.cyborg_button_rect:
+                rect = self.overlay.cyborg_button_rect
+                if rect[0] <= x <= rect[0] + rect[2] and rect[1] <= y <= rect[1] + rect[3]:
+                    if self.overlay.attack_mode_callback:
+                        self.overlay.attack_mode_callback("cyborg")
+                    self.raise_()  # Keep on top
+                    self.activateWindow()
+                    return
 
 
 class OverlayQt:
@@ -33,28 +65,42 @@ class OverlayQt:
             except Exception:
                 pass
         
+        self.cyborg_pixmap = None
+        cyborg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "images", "cyborg.png")
+        if os.path.exists(cyborg_path):
+            try:
+                self.cyborg_pixmap = QPixmap(cyborg_path)
+            except Exception:
+                pass
+        
         # Current attack mode (default: megapow)
         self.current_attack_mode = "megapow"
+        self.attack_mode_callback = None
         
         if status_bar_mode:
             # Compact status bar at top-center with attack modes
             screen = self.app.primaryScreen().geometry()
-            bar_width = 480  # Increased width for better spacing
+            bar_width = 600  # Increased width for two buttons
             bar_height = 85   # Increased height for better readability
             bar_x = (screen.width() - bar_width) // 2
             bar_y = 10
             
-            self.widget = QWidget()
-            flags = Qt.FramelessWindowHint | Qt.Tool
-            if topmost:
-                flags |= Qt.WindowStaysOnTopHint
+            self.widget = ClickableWidget()
+            self.widget.set_overlay(self)
+            flags = Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint
             self.widget.setWindowFlags(flags)
             self.widget.setAttribute(Qt.WA_TranslucentBackground, True)
+            self.widget.setAttribute(Qt.WA_ShowWithoutActivating, True)
             self.widget.setGeometry(bar_x, bar_y, bar_width, bar_height)
             self.widget.setWindowTitle(self.title)
             self.label = QLabel(self.widget)
             self.label.setGeometry(0, 0, bar_width, bar_height)
             self.label.setAlignment(Qt.AlignCenter)
+            
+            # Store button positions for click detection
+            self.button_size = 55
+            self.megapow_button_rect = None
+            self.cyborg_button_rect = None
             
             # Detection overlay (full screen, transparent, click-through)
             self.detection_widget = QWidget()
@@ -83,11 +129,23 @@ class OverlayQt:
             self.label.show()
             self.widget = None
             self.detection_widget = None
+    
+    def set_attack_mode_callback(self, callback):
+        """Set the callback function for attack mode changes"""
+        self.attack_mode_callback = callback
+    
+    def raise_to_top(self):
+        """Ensure overlay stays on top"""
+        if self.widget:
+            self.widget.raise_()
+            self.widget.activateWindow()
+        if self.detection_widget:
+            self.detection_widget.raise_()
 
     def update(self, frame_bgr: np.ndarray, status_text: Optional[str] = None, det_bbox: Optional[Tuple[int, int, int, int]] = None, aim_point: Optional[Tuple[int, int]] = None, roi_offset: Tuple[int, int] = (0, 0), attack_mode: str = "megapow"):
         if self.status_bar_mode and status_text:
             # Enhanced modern status bar with attack modes on the side
-            bar_width = 480
+            bar_width = 600  # Increased width for two buttons
             bar_height = 85
             pixmap = QPixmap(bar_width, bar_height)
             pixmap.fill(Qt.transparent)
@@ -130,28 +188,59 @@ class OverlayQt:
             
             # --- ATTACK MODE BUTTONS (SQUARE) on the right side ---
             button_size = 55  # Bigger square buttons
-            button_x = bar_width - button_size - 20
+            button_spacing = 10
             button_y = (bar_height - button_size) // 2 - 2
             
-            # Draw square button for Megapow - NO BORDER when inactive
-            button_rect = QRectF(button_x, button_y, button_size, button_size)
+            # Cyborg button (rightmost)
+            cyborg_button_x = bar_width - button_size - 20
+            cyborg_button_rect = QRectF(cyborg_button_x, button_y, button_size, button_size)
+            self.cyborg_button_rect = (int(cyborg_button_x), int(button_y), button_size, button_size)
             
-            # Button fill (lighter red tone)
+            # Megapow button (to the left of cyborg)
+            megapow_button_x = cyborg_button_x - button_size - button_spacing
+            megapow_button_rect = QRectF(megapow_button_x, button_y, button_size, button_size)
+            self.megapow_button_rect = (int(megapow_button_x), int(button_y), button_size, button_size)
+            
+            # Draw Cyborg button
             painter.setBrush(QColor(140, 60, 50, 220))
-            painter.setPen(Qt.NoPen)  # NO border by default
-            painter.drawRect(button_rect)  # Square button, no rounded corners
+            painter.setPen(Qt.NoPen)
+            painter.drawRect(cyborg_button_rect)
             
-            # White border ONLY if active
+            # White border if cyborg is active
+            if self.current_attack_mode == "cyborg":
+                painter.setPen(QPen(QColor(255, 255, 255, 255), 3))
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRect(cyborg_button_rect)
+            
+            # Draw cyborg icon CENTERED in square
+            if self.cyborg_pixmap:
+                icon_size = 38
+                scaled_icon = self.cyborg_pixmap.scaled(icon_size, icon_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                icon_x = int(cyborg_button_x + (button_size - scaled_icon.width()) // 2)
+                icon_y = int(button_y + (button_size - scaled_icon.height()) // 2)
+                painter.drawPixmap(icon_x, icon_y, scaled_icon)
+            else:
+                # Fallback: Draw "X" text
+                painter.setPen(QColor(255, 255, 255, 255))
+                painter.setFont(QFont("Segoe UI", 24, QFont.Bold))
+                painter.drawText(cyborg_button_rect, Qt.AlignCenter, "X")
+            
+            # Draw Megapow button
+            painter.setBrush(QColor(140, 60, 50, 220))
+            painter.setPen(Qt.NoPen)
+            painter.drawRect(megapow_button_rect)
+            
+            # White border if megapow is active
             if self.current_attack_mode == "megapow":
                 painter.setPen(QPen(QColor(255, 255, 255, 255), 3))
                 painter.setBrush(Qt.NoBrush)
-                painter.drawRect(button_rect)  # Square border
+                painter.drawRect(megapow_button_rect)
             
             # Draw megapow icon CENTERED in square
             if self.megapow_pixmap:
                 icon_size = 38  # Icon size
                 scaled_icon = self.megapow_pixmap.scaled(icon_size, icon_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                icon_x = int(button_x + (button_size - scaled_icon.width()) // 2)
+                icon_x = int(megapow_button_x + (button_size - scaled_icon.width()) // 2)
                 icon_y = int(button_y + (button_size - scaled_icon.height()) // 2)
                 painter.drawPixmap(icon_x, icon_y, scaled_icon)
             
@@ -263,6 +352,12 @@ class OverlayQt:
             qimg = QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888)
             pix = QPixmap.fromImage(qimg)
             self.label.setPixmap(pix)
+        
+        # Periodically raise to ensure always on top
+        if self.widget:
+            self.widget.raise_()
+        if self.detection_widget:
+            self.detection_widget.raise_()
         
         self.app.processEvents()
 

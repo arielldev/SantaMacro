@@ -113,6 +113,11 @@ class SantaMacro:
         self.megapow_fire_duration = 5.0
         self.megapow_cooldown_duration = 5.2
         
+        self.cyborg_load_duration = 0.5
+        self.cyborg_fire_duration = 15
+        self.cyborg_cooldown_duration = 17
+        
+        self._x_key_down = False
         self._smoothed_cursor_pos = None
         self._cursor_smooth_alpha = 0.4
         self.motion_cfg = self.cfg["detection"].get("motion", {})
@@ -196,9 +201,10 @@ class SantaMacro:
         self._debug_log_counter: int = 0
         
         self._detection_movement_history: List[Tuple[int, int]] = []
-        self._max_movement_history: int = 5
-        self._min_movement_pixels: int = 8  # Reduced from 20 to allow slower-moving Santa
+        self._max_movement_history: int = 10  # Increased to track more frames
+        self._min_movement_pixels: int = 15  # Reasonable movement threshold - Santa moves, trees don't
         self._has_attacked_successfully: bool = False
+        self._camera_has_tracked: bool = False  # Track if we've followed Santa with camera
         self._static_rejection_count: int = 0  # Track consecutive static object rejections
         self._last_rejected_position: Optional[int] = None  # X position of last rejected static object
 
@@ -339,6 +345,18 @@ class SantaMacro:
             self.logger.warning("[YOLO MODEL] No model path configured")
         
         self.logger.info("[MINIMAL MODE] Santa Lock-on Mode ENABLED")
+
+    def _get_load_duration(self):
+        """Get load duration for current attack mode"""
+        return getattr(self, f"{self.attack_mode}_load_duration")
+    
+    def _get_fire_duration(self):
+        """Get fire duration for current attack mode"""
+        return getattr(self, f"{self.attack_mode}_fire_duration")
+    
+    def _get_cooldown_duration(self):
+        """Get cooldown duration for current attack mode"""
+        return getattr(self, f"{self.attack_mode}_cooldown_duration")
 
     def _setup_logger(self, log_cfg: dict) -> logging.Logger:
         logger = logging.getLogger("SantaMacro")
@@ -1102,7 +1120,7 @@ class SantaMacro:
 
     def _aim_point(self, bbox: Tuple[int, int, int, int]) -> Tuple[int, int]:
         x, y, w, h = bbox
-        cx = x + w // 2
+        cx = x + w // 4  # Aim between left edge and center (1/4 width from left)
         cy = y + h // 2
         if self.clamp_to_screen:
             screen_right = self.monitor["left"] + self.monitor["width"]
@@ -1264,6 +1282,48 @@ class SantaMacro:
                 self.logger.info("[PYAUTOGUI] Mouse UP")
         except Exception as e:
             self.logger.error(f"pyautogui click failed: {e}")
+    
+    def _send_x_key(self, down: bool = True):
+        """Send X key press/release using pydirectinput"""
+        try:
+            if down:
+                pydirectinput.keyDown('x')
+                self.logger.info("[PYDIRECTINPUT] X key DOWN")
+            else:
+                pydirectinput.keyUp('x')
+                self.logger.info("[PYDIRECTINPUT] X key UP")
+        except Exception as e:
+            self.logger.error(f"X key input failed: {e}")
+    
+    def _send_attack_input(self, down: bool = True):
+        """Send attack input based on current attack mode"""
+        if self.attack_mode == "cyborg":
+            self._send_x_key(down)
+            if down:
+                self._x_key_down = True
+            else:
+                self._x_key_down = False
+        else:  # megapow
+            self._send_mouse_click(down)
+            if down:
+                self._mouse_down = True
+            else:
+                self._mouse_down = False
+    
+    def toggle_attack_mode(self):
+        """Toggle between attack modes"""
+        if self.attack_mode == "megapow":
+            self.attack_mode = "cyborg"
+            self.logger.info("[ATTACK MODE] Switched to CYBORG (X key)")
+        else:
+            self.attack_mode = "megapow"
+            self.logger.info("[ATTACK MODE] Switched to MEGAPOW (Left Click)")
+    
+    def _on_attack_mode_button_click(self, mode: str):
+        """Callback when attack mode button is clicked in overlay"""
+        if mode != self.attack_mode:
+            self.attack_mode = mode
+            self.logger.info(f"[ATTACK MODE] Button clicked - Switched to {mode.upper()}")
 
     def _click_down(self):
         if not self._mouse_down:
@@ -1549,6 +1609,8 @@ class SantaMacro:
                         topmost=self.overlay_topmost,
                         status_bar_mode=self.overlay_status_bar_mode,
                     )
+                    # Set up callback for attack mode button clicks
+                    self._qt_overlay.set_attack_mode_callback(self._on_attack_mode_button_click)
             else:
                 self._ensure_overlay_window(frame_bgr.shape[1], frame_bgr.shape[0])
 
@@ -1706,6 +1768,9 @@ class SantaMacro:
                     self.state = MacroState.IDLE
                     if self._mouse_down:
                         self._click_up()
+                    if self._x_key_down:
+                        pydirectinput.keyUp('x')
+                        self._x_key_down = False
                     try:
                         with self.arrow_lock:
                             if self.current_arrow_key:
@@ -1752,6 +1817,9 @@ class SantaMacro:
                     self.state = MacroState.IDLE
                     if self._mouse_down:
                         self._click_up()
+                    if self._x_key_down:
+                        pydirectinput.keyUp('x')
+                        self._x_key_down = False
                     try:
                         with self.arrow_lock:
                             if self.current_arrow_key:
@@ -1801,7 +1869,7 @@ class SantaMacro:
                     det = DetectionResult(bbox=None, confidence=0.0)
                     if self.overlay_enabled:
                         self._update_fps()
-                        self._draw_overlay(frame_bgr, det, None)
+                        self._draw_overlay(frame_bgr, det, None, attack_mode=self.attack_mode)
                     time.sleep(self.idle_backoff_ms / 1000.0)
                     continue
 
@@ -1812,7 +1880,7 @@ class SantaMacro:
                         self._click_up()
                     if self.overlay_enabled:
                         self._update_fps()
-                        self._draw_overlay(frame_bgr, det, None)
+                        self._draw_overlay(frame_bgr, det, None, attack_mode=self.attack_mode)
                     time.sleep(self.tick_interval)
                     continue
                 
@@ -1852,7 +1920,7 @@ class SantaMacro:
                             
                             if not self._running:
                                 self.logger.info("[STOP] Detected stop signal after YOLO detection")
-                                break
+                                continue
                             
                             for result in results:
                                 boxes = result.boxes
@@ -1904,8 +1972,11 @@ class SantaMacro:
                                         frames_since_search = self._debug_log_counter - getattr(self, '_search_exit_frame', -999)
                                         skip_validation = frames_since_search < 3
                                         
-                                        # Skip position jump validation during attack phases - Santa moves unpredictably during combat
-                                        if self._last_santa_center is not None and self.search_state == "idle" and not skip_validation and self.attack_phase == "idle":
+                                        # Skip position jump validation if camera is actively moving - camera movement causes legitimate large position changes
+                                        camera_is_moving = self.current_arrow_key is not None and self.is_holding_arrow
+                                        
+                                        # Skip position jump validation during attack phases or when camera is moving
+                                        if self._last_santa_center is not None and self.search_state == "idle" and not skip_validation and self.attack_phase == "idle" and not camera_is_moving:
                                             prev_cx, prev_cy = self._last_santa_center
                                             jump_distance = abs(candidate_cx - prev_cx)
                                             max_reasonable_jump = 250
@@ -1967,13 +2038,13 @@ class SantaMacro:
                                     self.camera_keys_pressed.discard(self.current_arrow_key)
                                 self.current_arrow_key = None
                                 self.is_holding_arrow = False
-                        break
+                        continue
                     
                     current_time = time.time()
                     
                     if self.attack_phase == "cooldown" and best_santa:
                         phase_elapsed = current_time - self.attack_phase_start
-                        if phase_elapsed >= self.megapow_cooldown_duration:
+                        if phase_elapsed >= self._get_cooldown_duration():
                             # CRITICAL: Before restarting attack, validate Santa's position
                             # If Santa is too far out of bounds, abort and search instead of looping forever
                             x1, y1, x2, y2 = best_santa['box']
@@ -1990,6 +2061,11 @@ class SantaMacro:
                                 # Santa is way out of bounds - this might be a tree or Santa escaped
                                 # Abort the attack loop and search for proper target
                                 self.logger.info(f"[COOLDOWN END] Santa at X={santa_cx} outside acceptable range ({abort_zone_left}-{abort_zone_right}) - ABORTING attack loop")
+                                
+                                # Press '1' after E spam sequence ends (even when aborting)
+                                pydirectinput.press('1')
+                                self.logger.info("[COOLDOWN] Pressed '1' after E spam sequence (aborting)")
+                                
                                 self.attack_phase = "idle"
                                 self._consecutive_detections = 0
                                 self._detection_movement_history.clear()
@@ -2015,6 +2091,11 @@ class SantaMacro:
                                             self.camera_keys_pressed.discard(self.current_arrow_key)
                                         self.current_arrow_key = None
                                         self.is_holding_arrow = False
+                                
+                                # Press '1' after E spam sequence ends
+                                pydirectinput.press('1')
+                                self.logger.info("[COOLDOWN] Pressed '1' after E spam sequence")
+                                
                                 # Reset consecutive detections for the next attack cycle
                                 self._consecutive_detections = 0
                                 self.attack_phase = "load"
@@ -2026,7 +2107,7 @@ class SantaMacro:
                         x1, y1, x2, y2 = best_santa['box']
                         w = x2 - x1
                         h = y2 - y1
-                        santa_cx = x1 + w // 2
+                        santa_cx = x1 + w // 4  # Aim between left edge and center (1/4 width from left)
                         santa_cy = y1 + h // 2
                         
                         self._position_history.append((santa_cx, santa_cy))
@@ -2048,7 +2129,7 @@ class SantaMacro:
                         target_y_roi = santa_cy
                         
                         if self._debug_log_counter % 10 == 0:
-                            self.logger.info(f"[AIM] Center of Santa")
+                            self.logger.info(f"[AIM] Left-quarter of Santa (between left edge and center)")
                         
                         target_x = target_x_roi + self.roi["left"]
                         target_y = target_y_roi + self.roi["top"]
@@ -2124,6 +2205,7 @@ class SantaMacro:
                                             self.camera_keys_pressed.add('left')
                                         self.current_arrow_key = 'left'
                                         self.is_holding_arrow = True
+                                        self._camera_has_tracked = True  # Confirmed we're tracking Santa
                                         if self._debug_log_counter % 10 == 0:
                                             self.logger.info(f"[{self.attack_phase.upper()}] Santa at X={santa_cx} too far LEFT - repositioning camera")
                                 elif santa_cx > reposition_threshold_right:
@@ -2138,6 +2220,7 @@ class SantaMacro:
                                             self.camera_keys_pressed.add('right')
                                         self.current_arrow_key = 'right'
                                         self.is_holding_arrow = True
+                                        self._camera_has_tracked = True  # Confirmed we're tracking Santa
                                         if self._debug_log_counter % 10 == 0:
                                             self.logger.info(f"[{self.attack_phase.upper()}] Santa at X={santa_cx} too far RIGHT - repositioning camera")
                                 else:
@@ -2172,6 +2255,7 @@ class SantaMacro:
                                             self.camera_keys_pressed.add('left')
                                         self.current_arrow_key = 'left'
                                         self.is_holding_arrow = True
+                                        self._camera_has_tracked = True  # Confirmed we're tracking Santa
                                         if self._debug_log_counter % 10 == 0:
                                             self.logger.info(f"[COOLDOWN] Following Santa LEFT (offset={offset_x:.0f})")
                                 elif should_move_right:
@@ -2185,6 +2269,7 @@ class SantaMacro:
                                             self.camera_keys_pressed.add('right')
                                         self.current_arrow_key = 'right'
                                         self.is_holding_arrow = True
+                                        self._camera_has_tracked = True  # Confirmed we're tracking Santa
                                         if self._debug_log_counter % 10 == 0:
                                             self.logger.info(f"[COOLDOWN] Following Santa RIGHT (offset={offset_x:.0f})")
                                 else:
@@ -2205,49 +2290,16 @@ class SantaMacro:
                             self.logger.info(f"[DETECTION STATE] consecutive={self._consecutive_detections}, attack_phase={self.attack_phase}, has_attacked={self._has_attacked_successfully}")
                         
                         can_start_attack = False
-                        # Reduce requirements for faster attack initiation
-                        required_detections = 3  # Same for first attack and subsequent attacks
-                        required_movement_frames = 3  # Reduced to 3 frames minimum
+                        # Simple: If YOLO consistently detects Santa, attack
+                        required_detections = 3
                         
                         if self.attack_phase == "idle" and self._consecutive_detections >= required_detections:
-                            # Check movement - filter out static objects (trees/decorations)
-                            if len(self._detection_movement_history) >= required_movement_frames:
-                                x_positions = [pos[0] for pos in self._detection_movement_history]
-                                total_movement = max(x_positions) - min(x_positions)
-                                if total_movement < self._min_movement_pixels:
-                                    current_x = x_positions[-1]
-                                    
-                                    # Track rejections at same position
-                                    if self._last_rejected_position is not None and abs(current_x - self._last_rejected_position) < 50:
-                                        self._static_rejection_count += 1
-                                    else:
-                                        self._static_rejection_count = 1
-                                    
-                                    self._last_rejected_position = current_x
-                                    self.logger.info(f"[ATTACK BLOCKED] Object static (moved {total_movement}px) at X={current_x} - rejection #{self._static_rejection_count}")
-                                    
-                                    # After 3 rejections at same spot, force camera to search elsewhere
-                                    if self._static_rejection_count >= 3:
-                                        self.logger.info(f"[STATIC TREE DETECTED] Same static object rejected 3 times - forcing camera search")
-                                        self.search_state = "searching_left"
-                                        self._static_rejection_count = 0
-                                        self._last_rejected_position = None
-                                    
-                                    self._consecutive_detections = 0
-                                    self._detection_movement_history.clear()
-                                else:
-                                    # Valid movement detected - reset static rejection counter
-                                    self._static_rejection_count = 0
-                                    self._last_rejected_position = None
-                                    can_start_attack = True
-                                    if self._has_attacked_successfully:
-                                        self.logger.info(f"[ATTACK] Santa validated - moved {total_movement}px, restarting attack")
-                                    else:
-                                        self.logger.info(f"[ATTACK] Santa validated on startup - moved {total_movement}px in {len(self._detection_movement_history)} frames")
+                            # YOLO detected Santa consistently - that's enough validation
+                            can_start_attack = True
+                            if self._has_attacked_successfully:
+                                self.logger.info(f"[ATTACK] Santa detected {self._consecutive_detections} times, restarting attack")
                             else:
-                                # Still building movement history - log progress
-                                if self._debug_log_counter % 15 == 0:
-                                    self.logger.info(f"[WAITING] Building movement history: {len(self._detection_movement_history)}/{required_movement_frames} frames")
+                                self.logger.info(f"[ATTACK] Santa detected {self._consecutive_detections} times, starting first attack")
                         
                         if can_start_attack:
                             safe_zone_left = int(self.roi["width"] * 0.25)
@@ -2267,6 +2319,7 @@ class SantaMacro:
                                             self.camera_keys_pressed.add("left")
                                         self.current_arrow_key = "left"
                                         self.is_holding_arrow = True
+                                        self._camera_has_tracked = True  # Mark that we've tracked Santa
                             elif santa_cx > safe_zone_right:
                                 self.logger.info(f"[ATTACK BLOCKED] Santa at X={santa_cx} RIGHT of safe zone (> {safe_zone_right}) - moving camera RIGHT")
                                 can_start_attack = False
@@ -2281,6 +2334,7 @@ class SantaMacro:
                                             self.camera_keys_pressed.add("right")
                                         self.current_arrow_key = "right"
                                         self.is_holding_arrow = True
+                                        self._camera_has_tracked = True  # Mark that we've tracked Santa
                         
                         if can_start_attack:
                             # CRITICAL: Restore Roblox focus before attack
@@ -2305,44 +2359,50 @@ class SantaMacro:
                             
                             pydirectinput.press('e')
                             if self._debug_log_counter % 10 == 0:
-                                remaining = self.megapow_cooldown_duration - phase_elapsed
-                                self.logger.info(f"[COOLDOWN] Spamming E during cooldown ({phase_elapsed:.1f}s/{self.megapow_cooldown_duration}s)")
+                                self.logger.info(f"[COOLDOWN] Spamming E during cooldown ({phase_elapsed:.1f}s/{self._get_cooldown_duration()}s)")
                         
                         if self.attack_phase == "load":
                             phase_elapsed = current_time - self.attack_phase_start
                             
-                            if not self._mouse_down:
-                                self._send_mouse_click(down=True)
-                                self._mouse_down = True
-                                self.logger.info("[MOUSE] LEFT BUTTON DOWN (LOAD)")
+                            if not self._mouse_down and not self._x_key_down:
+                                self._send_attack_input(down=True)
+                                input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
+                                self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (LOAD)")
                             
-                            if phase_elapsed >= self.megapow_load_duration:
+                            if phase_elapsed >= self._get_load_duration():
                                 self.attack_phase = "fire"
                                 self.attack_phase_start = current_time
                                 self.attack_committed = True
                                 self._has_attacked_successfully = True
                                 self.logger.info("[MEGAPOW] Stage 1 complete -> Stage 2: FIRE started (5.0s)")
                             elif self._debug_log_counter % 25 == 0:
-                                self.logger.info(f"[MEGAPOW] Stage 1: LOAD ({phase_elapsed:.1f}s/{self.megapow_load_duration}s)")
+                                mode_name = self.attack_mode.upper()
+                                self.logger.info(f"[{mode_name}] Stage 1: LOAD ({phase_elapsed:.1f}s/{self._get_load_duration()}s)")
                         
                         elif self.attack_phase == "fire":
                             phase_elapsed = current_time - self.attack_phase_start
                             
-                            if not self._mouse_down:
-                                self._send_mouse_click(down=True)
-                                self._mouse_down = True
-                                self.logger.info("[MOUSE] LEFT BUTTON DOWN (FIRE)")
+                            if not self._mouse_down and not self._x_key_down:
+                                self._send_attack_input(down=True)
+                                input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
+                                self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (FIRE)")
                             
-                            if phase_elapsed >= self.megapow_fire_duration:
-                                if self._mouse_down:
-                                    self._send_mouse_click(down=False)
-                                    self._mouse_down = False
-                                    self.logger.info("[MOUSE] LEFT BUTTON UP (FIRE COMPLETE)")
+                            if phase_elapsed >= self._get_fire_duration():
+                                if self._mouse_down or self._x_key_down:
+                                    self._send_attack_input(down=False)
+                                    input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
+                                    self.logger.info(f"[ATTACK INPUT] {input_type} UP (FIRE COMPLETE)")
+                                
+                                # Press '1' before starting E spam sequence
+                                pydirectinput.press('1')
+                                self.logger.info("[COOLDOWN] Pressed '1' before E spam sequence")
+                                
                                 self.attack_phase = "cooldown"
                                 self.attack_phase_start = current_time
                                 self.logger.info("[MEGAPOW] Stage 2 complete -> Stage 3: COOLDOWN started (5.2s)")
                             elif self._debug_log_counter % 25 == 0:
-                                self.logger.info(f"[MEGAPOW] Stage 2: FIRE ({phase_elapsed:.1f}s/{self.megapow_fire_duration}s)")
+                                mode_name = self.attack_mode.upper()
+                                self.logger.info(f"[{mode_name}] Stage 2: FIRE ({phase_elapsed:.1f}s/{self._get_fire_duration()}s)")
                         
                         if self.overlay_enabled:
                             self._update_fps()
@@ -2354,9 +2414,8 @@ class SantaMacro:
                     else:
                         if not self._running:
                             self.logger.info("[STOP] Stopping in no-detection branch")
-                            if self._mouse_down:
-                                self._send_mouse_click(down=False)
-                                self._mouse_down = False
+                            if self._mouse_down or self._x_key_down:
+                                self._send_attack_input(down=False)
                             with self.arrow_lock:
                                 if self.current_arrow_key:
                                     pydirectinput.keyUp(self.current_arrow_key)
@@ -2364,7 +2423,7 @@ class SantaMacro:
                                         self.camera_keys_pressed.discard(self.current_arrow_key)
                                     self.current_arrow_key = None
                                     self.is_holding_arrow = False
-                            break
+                            continue
                         
                         if self._last_detection_frame >= 0:
                             frames_since_detection = self._debug_log_counter - self._last_detection_frame
@@ -2372,22 +2431,28 @@ class SantaMacro:
                             frames_since_detection = 9999
                         
                         if frames_since_detection <= self._detection_grace_frames and self._last_detection_frame >= 0:
-                            if self.attack_phase in ["load", "fire"] and not self._mouse_down:
-                                self._send_mouse_click(down=True)
-                                self._mouse_down = True
-                                self.logger.info("[MOUSE] LEFT BUTTON DOWN (GRACE PERIOD)")
+                            if self.attack_phase in ["load", "fire"] and not self._mouse_down and not self._x_key_down:
+                                self._send_attack_input(down=True)
+                                input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
+                                self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (GRACE PERIOD)")
                             
                             current_time = time.time()
                             phase_elapsed = current_time - self.attack_phase_start
                             
-                            if self.attack_phase == "fire" and phase_elapsed >= self.megapow_fire_duration:
-                                if self._mouse_down:
-                                    self._send_mouse_click(down=False)
-                                    self._mouse_down = False
-                                    self.logger.info("[MOUSE] LEFT BUTTON UP (GRACE FIRE COMPLETE)")
+                            if self.attack_phase == "fire" and phase_elapsed >= self._get_fire_duration():
+                                if self._mouse_down or self._x_key_down:
+                                    self._send_attack_input(down=False)
+                                    input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
+                                    self.logger.info(f"[ATTACK INPUT] {input_type} UP (GRACE FIRE COMPLETE)")
+                                
+                                # Press '1' before starting E spam sequence
+                                pydirectinput.press('1')
+                                self.logger.info("[COOLDOWN] Pressed '1' before E spam sequence")
+                                
                                 self.attack_phase = "cooldown"
                                 self.attack_phase_start = current_time
-                                self.logger.info("[MEGAPOW] Stage 2 complete (grace) -> Stage 3: COOLDOWN")
+                                mode_name = self.attack_mode.upper()
+                                self.logger.info(f"[{mode_name}] Stage 2 complete (grace) -> Stage 3: COOLDOWN")
                             elif self.attack_phase == "cooldown":
                                 pydirectinput.press('e')
                                 if self._debug_log_counter % 10 == 0:
@@ -2414,28 +2479,46 @@ class SantaMacro:
                             if self._debug_log_counter % 50 == 0:
                                 self.logger.info("[SEARCHING] Looking for Santa...")
                             
-                            # Abort attack immediately when losing Santa
-                            if self.attack_phase in ["load", "fire"] and self._mouse_down:
-                                self._send_mouse_click(down=False)
-                                self._mouse_down = False
-                                self.logger.info("[ATTACKING] ABORTING - Grace period expired, lost Santa")
-                                
-                                # NO COOLDOWN - reset immediately so we can attack as soon as we find Santa again
-                                self.attack_phase = "idle"
-                                self.attack_committed = False
-                                self._has_attacked_successfully = False
-                                self.logger.info("[MEGAPOW] Attack aborted -> Reset to idle, no cooldown penalty")
+                            # Don't abort attack if we're in FIRE or LOAD phase - keep going!
+                            # Santa might reappear, and we need to complete the cycle regardless
+                            if self.attack_phase in ["load", "fire"]:
+                                # Check if fire duration is complete
+                                if self.attack_phase == "fire":
+                                    phase_elapsed = time.time() - self.attack_phase_start
+                                    if phase_elapsed >= self._get_fire_duration():
+                                        # Fire complete, go to cooldown
+                                        if self._mouse_down or self._x_key_down:
+                                            self._send_attack_input(down=False)
+                                            input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
+                                            self.logger.info(f"[FIRE COMPLETE] {input_type} UP (no visual)")
+                                        
+                                        # Press '1' before starting E spam sequence
+                                        pydirectinput.press('1')
+                                        self.logger.info("[COOLDOWN] Pressed '1' before E spam sequence")
+                                        
+                                        self.attack_phase = "cooldown"
+                                        self.attack_phase_start = time.time()
+                                        self.attack_committed = True
+                                        self._has_attacked_successfully = True
+                                        mode_name = self.attack_mode.upper()
+                                        self.logger.info(f"[{mode_name}] Fire complete (lost visual) -> Starting COOLDOWN")
+                                    else:
+                                        # Keep firing even without visual
+                                        if not self._mouse_down and not self._x_key_down:
+                                            self._send_attack_input(down=True)
+                                # Continue with attack, don't search
+                                continue
                             
-                            if self._mouse_down:
+                            # Legacy mouse_down handling (should not reach here)
+                            if self._mouse_down and self.attack_phase != "cooldown":
                                 self._send_mouse_click(down=False)
                                 self._mouse_down = False
-                                self.logger.info("[ATTACKING] Left mouse up - lost Santa")
-                                
-                                # NO COOLDOWN - reset immediately
-                                self.attack_phase = "idle"
-                                self.attack_committed = False
-                                self._has_attacked_successfully = False
-                                self.logger.info("[MEGAPOW] Attack interrupted -> Reset to idle, no cooldown penalty")
+                                pydirectinput.press('1')
+                                self.attack_phase = "cooldown"
+                                self.attack_phase_start = time.time()
+                                self.attack_committed = True
+                                self._has_attacked_successfully = True
+                                self.logger.info("[COOLDOWN] Starting cooldown cycle after losing Santa")
                                 
                                 self.last_kill_time = time.time()
                                 self.logger.info("[LOOT] Starting E spam sequence...")
@@ -2451,10 +2534,10 @@ class SantaMacro:
                                 self._force_release_all_arrows()
                                 self.logger.info("[SEARCH] Force-released all arrows before search")
                                 
-                                if self.attack_phase == "cooldown":
-                                    self.attack_phase = "idle"
-                                    self.attack_committed = False
-                                    self.logger.info("[SEARCH] Resetting attack phase to idle for new search")
+                                # DO NOT search during any attack phase - must complete attack cycle first
+                                if self.attack_phase in ["load", "fire", "cooldown"]:
+                                    self.logger.info(f"[SEARCH] Cannot search - {self.attack_phase} in progress, waiting...")
+                                    continue  # Skip search, stay waiting for attack to complete
                                 
                                 self._last_santa_center = None
                                 self._detection_movement_history.clear()
@@ -2481,7 +2564,7 @@ class SantaMacro:
                         if self.overlay_enabled:
                             self._update_fps()
                             det = DetectionResult(bbox=None, confidence=0.0)
-                            self._draw_overlay(frame_bgr, det, None)
+                            self._draw_overlay(frame_bgr, det, None, attack_mode=self.attack_mode)
                     
                     self._debug_log_counter += 1
                     time.sleep(self.tick_interval)
@@ -2930,7 +3013,7 @@ class SantaMacro:
 
                 self._update_fps()
                 if self.overlay_enabled:
-                    self._draw_overlay(frame_bgr, det, aim)
+                    self._draw_overlay(frame_bgr, det, aim, attack_mode=self.attack_mode)
                 self._save_dump_if_needed(frame_bgr, det)
 
                 elapsed = time.time() - start_ts
@@ -2951,8 +3034,10 @@ class SantaMacro:
             except Exception as e:
                 self.logger.warning(f"Error releasing keys on exit: {e}")
             self.stop_hotkeys()
-            try:
-                self._destroy_overlay_window()
-            except Exception:
-                pass
+            # Only destroy overlay on shutdown, not on pause
+            if self.state == MacroState.SHUTDOWN:
+                try:
+                    self._destroy_overlay_window()
+                except Exception:
+                    pass
             self.logger.info("Macro loop exited.")
