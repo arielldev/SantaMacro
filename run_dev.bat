@@ -20,7 +20,7 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 echo Checking required packages...
-.venv\Scripts\python.exe -c "import mss, numpy, cv2, PIL, pyautogui, pydirectinput, pynput, PySide6, ultralytics" 2>nul
+.venv\Scripts\python.exe -c "import mss, numpy, cv2, PIL, pyautogui, pydirectinput, pynput, PySide6, ultralytics, requests" 2>nul
 if errorlevel 1 (
     echo.
     echo ========================================
@@ -55,6 +55,7 @@ echo.
 echo Controls:
 echo   F1 = START/STOP tracking (toggle)
 echo   ESC = EXIT
+echo   Settings button in overlay = Open settings GUI
 echo.
 echo ================================================
 

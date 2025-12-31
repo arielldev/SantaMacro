@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 
 class ClickableWidget(QWidget):
-    """Widget that can detect mouse clicks on attack mode buttons"""
+    """Widget that can detect mouse clicks on settings button"""
     def __init__(self):
         super().__init__()
         self.overlay = None
@@ -21,24 +21,24 @@ class ClickableWidget(QWidget):
     def mousePressEvent(self, event: QMouseEvent):
         if self.overlay and event.button() == Qt.LeftButton:
             x, y = event.pos().x(), event.pos().y()
-            # Check if click is on megapow button
-            if self.overlay.megapow_button_rect:
-                rect = self.overlay.megapow_button_rect
+            print(f"Mouse click at ({x}, {y})")  # Debug output
+            
+            # Check if click is on settings button
+            if self.overlay.settings_button_rect:
+                rect = self.overlay.settings_button_rect
+                print(f"Settings button rect: {rect}")  # Debug output
                 if rect[0] <= x <= rect[0] + rect[2] and rect[1] <= y <= rect[1] + rect[3]:
-                    if self.overlay.attack_mode_callback:
-                        self.overlay.attack_mode_callback("megapow")
+                    print("Settings button clicked!")  # Debug output
+                    if self.overlay.settings_callback:
+                        print("Calling settings callback")  # Debug output
+                        self.overlay.settings_callback()
+                    else:
+                        print("No settings callback set!")  # Debug output
                     self.raise_()  # Keep on top
                     self.activateWindow()
                     return
-            # Check if click is on cyborg button
-            if self.overlay.cyborg_button_rect:
-                rect = self.overlay.cyborg_button_rect
-                if rect[0] <= x <= rect[0] + rect[2] and rect[1] <= y <= rect[1] + rect[3]:
-                    if self.overlay.attack_mode_callback:
-                        self.overlay.attack_mode_callback("cyborg")
-                    self.raise_()  # Keep on top
-                    self.activateWindow()
-                    return
+            else:
+                print("No settings button rect set!")  # Debug output
 
 
 class OverlayQt:
@@ -56,32 +56,15 @@ class OverlayQt:
             except Exception:
                 pass
         
-        # Load attack mode icons
-        self.megapow_pixmap = None
-        megapow_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "images", "megapow.webp")
-        if os.path.exists(megapow_path):
-            try:
-                self.megapow_pixmap = QPixmap(megapow_path)
-            except Exception:
-                pass
-        
-        self.cyborg_pixmap = None
-        cyborg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "images", "cyborg.png")
-        if os.path.exists(cyborg_path):
-            try:
-                self.cyborg_pixmap = QPixmap(cyborg_path)
-            except Exception:
-                pass
-        
-        # Current attack mode (default: megapow)
-        self.current_attack_mode = "megapow"
-        self.attack_mode_callback = None
+        # Current attack mode and settings callback
+        self.current_attack_mode = "custom"
+        self.settings_callback = None
         
         if status_bar_mode:
-            # Compact status bar at top-center with attack modes
+            # Compact status bar at top-center with settings button
             screen = self.app.primaryScreen().geometry()
-            bar_width = 600  # Increased width for two buttons
-            bar_height = 85   # Increased height for better readability
+            bar_width = 400  # Reduced width
+            bar_height = 70   
             bar_x = (screen.width() - bar_width) // 2
             bar_y = 10
             
@@ -90,17 +73,16 @@ class OverlayQt:
             flags = Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint
             self.widget.setWindowFlags(flags)
             self.widget.setAttribute(Qt.WA_TranslucentBackground, True)
-            self.widget.setAttribute(Qt.WA_ShowWithoutActivating, True)
+            # Remove the ShowWithoutActivating attribute so it can receive clicks
+            # self.widget.setAttribute(Qt.WA_ShowWithoutActivating, True)
             self.widget.setGeometry(bar_x, bar_y, bar_width, bar_height)
             self.widget.setWindowTitle(self.title)
             self.label = QLabel(self.widget)
             self.label.setGeometry(0, 0, bar_width, bar_height)
             self.label.setAlignment(Qt.AlignCenter)
             
-            # Store button positions for click detection
-            self.button_size = 55
-            self.megapow_button_rect = None
-            self.cyborg_button_rect = None
+            # Store button position for click detection
+            self.settings_button_rect = None
             
             # Detection overlay (full screen, transparent, click-through)
             self.detection_widget = QWidget()
@@ -130,9 +112,9 @@ class OverlayQt:
             self.widget = None
             self.detection_widget = None
     
-    def set_attack_mode_callback(self, callback):
-        """Set the callback function for attack mode changes"""
-        self.attack_mode_callback = callback
+    def set_settings_callback(self, callback):
+        """Set the callback function for settings button"""
+        self.settings_callback = callback
     
     def raise_to_top(self):
         """Ensure overlay stays on top"""
@@ -142,11 +124,11 @@ class OverlayQt:
         if self.detection_widget:
             self.detection_widget.raise_()
 
-    def update(self, frame_bgr: np.ndarray, status_text: Optional[str] = None, det_bbox: Optional[Tuple[int, int, int, int]] = None, aim_point: Optional[Tuple[int, int]] = None, roi_offset: Tuple[int, int] = (0, 0), attack_mode: str = "megapow"):
+    def update(self, frame_bgr: np.ndarray, status_text: Optional[str] = None, det_bbox: Optional[Tuple[int, int, int, int]] = None, aim_point: Optional[Tuple[int, int]] = None, roi_offset: Tuple[int, int] = (0, 0), attack_mode: str = "custom"):
         if self.status_bar_mode and status_text:
-            # Enhanced modern status bar with attack modes on the side
-            bar_width = 600  # Increased width for two buttons
-            bar_height = 85
+            # Clean status bar with settings button
+            bar_width = 400
+            bar_height = 70
             pixmap = QPixmap(bar_width, bar_height)
             pixmap.fill(Qt.transparent)
             painter = QPainter(pixmap)
@@ -155,9 +137,9 @@ class OverlayQt:
             
             self.current_attack_mode = attack_mode
             
-            # Main background - flat top, rounded bottom only - SOLID COLOR (no gradient)
+            # Main background
             painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor(65, 28, 24, 240))  # Solid brownish-red
+            painter.setBrush(QColor(65, 28, 24, 240))
             painter.drawRect(QRectF(0, 0, bar_width, bar_height - 4))
             
             # Red bottom border with rounded corners
@@ -171,7 +153,7 @@ class OverlayQt:
             bottom_path.lineTo(bar_width, bar_height - 4)
             bottom_path.closeSubpath()
             
-            painter.setBrush(QColor(220, 60, 60, 220))  # Bright red accent
+            painter.setBrush(QColor(220, 60, 60, 220))
             painter.drawPath(bottom_path)
             
             # Draw logo
@@ -181,68 +163,27 @@ class OverlayQt:
                 painter.drawPixmap(logo_x, logo_y, self.logo_pixmap)
                 logo_x += 48
             
-            # Title - RED themed
+            # Title
             painter.setFont(QFont("Segoe UI", 13, QFont.Bold))
-            painter.setPen(QColor(255, 120, 120, 255))  # Light red/pink
+            painter.setPen(QColor(255, 120, 120, 255))
             painter.drawText(QRect(logo_x, 15, 180, 25), Qt.AlignLeft | Qt.AlignVCenter, "Santa Macro")
             
-            # --- ATTACK MODE BUTTONS (SQUARE) on the right side ---
-            button_size = 55  # Bigger square buttons
-            button_spacing = 10
+            # Settings button on the right
+            button_size = 50
             button_y = (bar_height - button_size) // 2 - 2
+            settings_button_x = bar_width - button_size - 20
+            settings_button_rect = QRectF(settings_button_x, button_y, button_size, button_size)
+            self.settings_button_rect = (int(settings_button_x), int(button_y), button_size, button_size)
             
-            # Cyborg button (rightmost)
-            cyborg_button_x = bar_width - button_size - 20
-            cyborg_button_rect = QRectF(cyborg_button_x, button_y, button_size, button_size)
-            self.cyborg_button_rect = (int(cyborg_button_x), int(button_y), button_size, button_size)
-            
-            # Megapow button (to the left of cyborg)
-            megapow_button_x = cyborg_button_x - button_size - button_spacing
-            megapow_button_rect = QRectF(megapow_button_x, button_y, button_size, button_size)
-            self.megapow_button_rect = (int(megapow_button_x), int(button_y), button_size, button_size)
-            
-            # Draw Cyborg button
+            # Draw settings button
             painter.setBrush(QColor(140, 60, 50, 220))
             painter.setPen(Qt.NoPen)
-            painter.drawRect(cyborg_button_rect)
+            painter.drawRect(settings_button_rect)
             
-            # White border if cyborg is active
-            if self.current_attack_mode == "cyborg":
-                painter.setPen(QPen(QColor(255, 255, 255, 255), 3))
-                painter.setBrush(Qt.NoBrush)
-                painter.drawRect(cyborg_button_rect)
-            
-            # Draw cyborg icon CENTERED in square
-            if self.cyborg_pixmap:
-                icon_size = 38
-                scaled_icon = self.cyborg_pixmap.scaled(icon_size, icon_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                icon_x = int(cyborg_button_x + (button_size - scaled_icon.width()) // 2)
-                icon_y = int(button_y + (button_size - scaled_icon.height()) // 2)
-                painter.drawPixmap(icon_x, icon_y, scaled_icon)
-            else:
-                # Fallback: Draw "X" text
-                painter.setPen(QColor(255, 255, 255, 255))
-                painter.setFont(QFont("Segoe UI", 24, QFont.Bold))
-                painter.drawText(cyborg_button_rect, Qt.AlignCenter, "X")
-            
-            # Draw Megapow button
-            painter.setBrush(QColor(140, 60, 50, 220))
-            painter.setPen(Qt.NoPen)
-            painter.drawRect(megapow_button_rect)
-            
-            # White border if megapow is active
-            if self.current_attack_mode == "megapow":
-                painter.setPen(QPen(QColor(255, 255, 255, 255), 3))
-                painter.setBrush(Qt.NoBrush)
-                painter.drawRect(megapow_button_rect)
-            
-            # Draw megapow icon CENTERED in square
-            if self.megapow_pixmap:
-                icon_size = 38  # Icon size
-                scaled_icon = self.megapow_pixmap.scaled(icon_size, icon_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                icon_x = int(megapow_button_x + (button_size - scaled_icon.width()) // 2)
-                icon_y = int(button_y + (button_size - scaled_icon.height()) // 2)
-                painter.drawPixmap(icon_x, icon_y, scaled_icon)
+            # Settings icon (gear)
+            painter.setPen(QColor(255, 255, 255, 255))
+            painter.setFont(QFont("Segoe UI", 20, QFont.Bold))
+            painter.drawText(settings_button_rect, Qt.AlignCenter, "⚙")
             
             # Parse status
             lines = status_text.split('\n') if status_text else []
@@ -250,7 +191,7 @@ class OverlayQt:
             if len(lines) >= 1:
                 status_line = lines[0]
                 
-                # Determine status - check in specific order to avoid substring matches
+                # Determine status
                 if "PAUSED" in status_line:
                     status_color = QColor(255, 193, 7)
                     status_emoji = "❙❙"
@@ -264,7 +205,6 @@ class OverlayQt:
                     status_emoji = "●"
                     status_text_display = "ACTIVE"
                 else:
-                    # Fallback
                     status_color = QColor(255, 82, 82)
                     status_emoji = "●"
                     status_text_display = "INACTIVE"
@@ -295,9 +235,8 @@ class OverlayQt:
                 # State detail
                 if state_detail:
                     painter.setFont(QFont("Segoe UI", 8))
-                    painter.setPen(QColor(170, 180, 200, 220))
-                    detail_x = logo_x + 35 + len(status_text_display) * 9
-                    painter.drawText(QRect(detail_x, 39, 150, 22), Qt.AlignLeft | Qt.AlignVCenter, f"• {state_detail}")
+                    painter.setPen(QColor(170, 180, 200, 200))
+                    painter.drawText(QRect(logo_x + 35, 48, 200, 18), Qt.AlignLeft | Qt.AlignVCenter, f"• {state_detail}")
             
             painter.end()
             self.label.setPixmap(pixmap)

@@ -1,0 +1,16 @@
+# Modern SantaMacro 2.0 Requirements
+# Core dependencies from original
+numpy>=1.21.0
+opencv-python>=4.5.0
+mss>=6.1.0
+pyautogui>=0.9.50
+pydirectinput>=1.0.4
+pynput>=1.7.0
+ultralytics>=8.0.0
+
+# New dependencies for modern features
+PySide6>=6.4.0          # Modern GUI framework
+requests>=2.25.0        # For Discord webhooks
+
+# Optional but recommended
+Pillow>=8.0.0          # Image processing support

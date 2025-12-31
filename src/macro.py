@@ -61,6 +61,7 @@ class SantaProfile:
 
 class SantaMacro:
     def __init__(self, config_path: str):
+        self.config_path = config_path  # Store config path for settings GUI
         with open(config_path, "r", encoding="utf-8") as f:
             self.cfg = json.load(f)
 
@@ -104,18 +105,18 @@ class SantaMacro:
         self._search_direction_start = None
         self._search_direction_duration = 3.0  # Switch directions every 3 seconds
         
-        self.attack_mode = "megapow"
+        self.attack_mode = "custom"
         self.attack_phase = "idle"
         self.attack_phase_start = 0.0
         self.attack_committed = False
         
-        self.megapow_load_duration = 0.5
-        self.megapow_fire_duration = 5.0
-        self.megapow_cooldown_duration = 5.2
-        
-        self.cyborg_load_duration = 0.5
-        self.cyborg_fire_duration = 15
-        self.cyborg_cooldown_duration = 17
+        # Initialize custom attack manager
+        try:
+            from action_system import CustomAttackManager
+            self.custom_attack_manager = CustomAttackManager(self.config_path)
+        except Exception as e:
+            self.logger.error(f"Failed to initialize custom attack manager: {e}")
+            self.custom_attack_manager = None
         
         self._x_key_down = False
         self._smoothed_cursor_pos = None
@@ -348,15 +349,24 @@ class SantaMacro:
 
     def _get_load_duration(self):
         """Get load duration for current attack mode"""
-        return getattr(self, f"{self.attack_mode}_load_duration")
+        if self.attack_mode == "custom":
+            return self.click_load_ms / 1000.0  # Convert ms to seconds
+        else:
+            return getattr(self, f"{self.attack_mode}_load_duration", 1.0)  # Default 1 second
     
     def _get_fire_duration(self):
         """Get fire duration for current attack mode"""
-        return getattr(self, f"{self.attack_mode}_fire_duration")
+        if self.attack_mode == "custom":
+            return self.click_shoot_ms / 1000.0  # Convert ms to seconds
+        else:
+            return getattr(self, f"{self.attack_mode}_fire_duration", 5.0)  # Default 5 seconds
     
     def _get_cooldown_duration(self):
         """Get cooldown duration for current attack mode"""
-        return getattr(self, f"{self.attack_mode}_cooldown_duration")
+        if self.attack_mode == "custom":
+            return self.click_cooldown_ms / 1000.0  # Convert ms to seconds
+        else:
+            return getattr(self, f"{self.attack_mode}_cooldown_duration", 6.0)  # Default 6 seconds
 
     def _setup_logger(self, log_cfg: dict) -> logging.Logger:
         logger = logging.getLogger("SantaMacro")
@@ -1296,34 +1306,74 @@ class SantaMacro:
             self.logger.error(f"X key input failed: {e}")
     
     def _send_attack_input(self, down: bool = True):
-        """Send attack input based on current attack mode"""
-        if self.attack_mode == "cyborg":
-            self._send_x_key(down)
+        """Send attack input using custom attack system"""
+        if self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled():
+            if down and not self.custom_attack_manager.player.playing:
+                # Start custom attack sequence
+                self.custom_attack_manager.play_custom_attack(loop=True)
+                self.logger.info("[CUSTOM ATTACK] Started custom attack sequence")
+            elif not down and self.custom_attack_manager.player.playing:
+                # Stop custom attack sequence
+                self.custom_attack_manager.stop_attack()
+                self.logger.info("[CUSTOM ATTACK] Stopped custom attack sequence")
+        else:
+            # Fallback to simple left click
             if down:
-                self._x_key_down = True
+                self._send_mouse_click(down=True)
             else:
-                self._x_key_down = False
-        else:  # megapow
-            self._send_mouse_click(down)
-            if down:
-                self._mouse_down = True
-            else:
-                self._mouse_down = False
+                self._send_mouse_click(down=False)
     
     def toggle_attack_mode(self):
-        """Toggle between attack modes"""
-        if self.attack_mode == "megapow":
-            self.attack_mode = "cyborg"
-            self.logger.info("[ATTACK MODE] Switched to CYBORG (X key)")
+        """Toggle custom attack mode on/off"""
+        if self.custom_attack_manager:
+            current_enabled = self.custom_attack_manager.is_custom_enabled()
+            # This would need to be implemented to toggle the setting
+            self.logger.info(f"[ATTACK MODE] Custom attacks: {'Enabled' if current_enabled else 'Disabled'}")
         else:
-            self.attack_mode = "megapow"
-            self.logger.info("[ATTACK MODE] Switched to MEGAPOW (Left Click)")
+            self.logger.info("[ATTACK MODE] Custom attack manager not available")
     
     def _on_attack_mode_button_click(self, mode: str):
-        """Callback when attack mode button is clicked in overlay"""
-        if mode != self.attack_mode:
-            self.attack_mode = mode
-            self.logger.info(f"[ATTACK MODE] Button clicked - Switched to {mode.upper()}")
+        """Handle attack mode button clicks (legacy)"""
+        print("_on_attack_mode_button_click called!")  # Debug output
+        self.open_settings()
+    
+    def _on_settings_button_click(self):
+        """Handle settings button click - opens settings GUI"""
+        print("_on_settings_button_click called!")  # Debug output
+        self.open_settings()
+    
+    def open_settings(self):
+        """Open the settings GUI"""
+        print("open_settings called!")  # Debug output
+        try:
+            # Import here to avoid circular imports
+            from PySide6.QtCore import QTimer
+            
+            # Use QTimer to run in main thread
+            def create_settings():
+                from settings_gui import SettingsGUI
+                print(f"Opening settings with config path: {self.config_path}")  # Debug output
+                
+                # Store reference to prevent garbage collection
+                if not hasattr(self, '_settings_window'):
+                    self._settings_window = None
+                
+                # Close existing window if open
+                if self._settings_window is not None:
+                    self._settings_window.close()
+                
+                # Create and store new settings window
+                self._settings_window = SettingsGUI(self.config_path)
+                self._settings_window.show()
+                print("Settings window created and shown")
+            
+            # Schedule to run in main thread
+            QTimer.singleShot(0, create_settings)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to open settings: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _click_down(self):
         if not self._mouse_down:
@@ -1593,7 +1643,7 @@ class SantaMacro:
             return True
         return False
 
-    def _draw_overlay(self, frame_bgr: np.ndarray, det: DetectionResult, aim: Optional[Tuple[int, int]], attack_mode: str = "megapow"):
+    def _draw_overlay(self, frame_bgr: np.ndarray, det: DetectionResult, aim: Optional[Tuple[int, int]], attack_mode: str = "custom"):
         now = time.time()
         if now - self._last_overlay_update_ts < self.tick_interval * 0.9:
             return
@@ -1609,8 +1659,8 @@ class SantaMacro:
                         topmost=self.overlay_topmost,
                         status_bar_mode=self.overlay_status_bar_mode,
                     )
-                    # Set up callback for attack mode button clicks
-                    self._qt_overlay.set_attack_mode_callback(self._on_attack_mode_button_click)
+                    # Set up callback for settings button clicks
+                    self._qt_overlay.set_settings_callback(self._on_settings_button_click)
             else:
                 self._ensure_overlay_window(frame_bgr.shape[1], frame_bgr.shape[0])
 
@@ -1766,6 +1816,12 @@ class SantaMacro:
                     self._running = False
                     self._paused = False
                     self.state = MacroState.IDLE
+                    
+                    # Stop custom attack sequence if running
+                    if self.custom_attack_manager and self.custom_attack_manager.player.playing:
+                        self.custom_attack_manager.stop_attack()
+                        self.logger.info("[STOP] Stopped custom attack sequence")
+                    
                     if self._mouse_down:
                         self._click_up()
                     if self._x_key_down:
@@ -1815,6 +1871,12 @@ class SantaMacro:
                     self._running = False
                     self._paused = False
                     self.state = MacroState.IDLE
+                    
+                    # Stop custom attack sequence if running
+                    if self.custom_attack_manager and self.custom_attack_manager.player.playing:
+                        self.custom_attack_manager.stop_attack()
+                        self.logger.info("[STOP] Stopped custom attack sequence")
+                    
                     if self._mouse_down:
                         self._click_up()
                     if self._x_key_down:
@@ -2364,10 +2426,18 @@ class SantaMacro:
                         if self.attack_phase == "load":
                             phase_elapsed = current_time - self.attack_phase_start
                             
-                            if not self._mouse_down and not self._x_key_down:
-                                self._send_attack_input(down=True)
-                                input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
-                                self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (LOAD)")
+                            # For custom attacks, only start once, don't spam
+                            if self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled():
+                                if not self.custom_attack_manager.player.playing:
+                                    self._send_attack_input(down=True)
+                                    input_type = "CUSTOM SEQUENCE"
+                                    self.logger.info(f"[ATTACK INPUT] {input_type} STARTED (LOAD)")
+                            else:
+                                # Traditional attack - spam input
+                                if not self._mouse_down and not self._x_key_down:
+                                    self._send_attack_input(down=True)
+                                    input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
+                                    self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (LOAD)")
                             
                             if phase_elapsed >= self._get_load_duration():
                                 self.attack_phase = "fire"
@@ -2382,16 +2452,28 @@ class SantaMacro:
                         elif self.attack_phase == "fire":
                             phase_elapsed = current_time - self.attack_phase_start
                             
-                            if not self._mouse_down and not self._x_key_down:
-                                self._send_attack_input(down=True)
-                                input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
-                                self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (FIRE)")
+                            # For custom attacks, don't spam input - let custom sequence handle it
+                            if self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled():
+                                # Custom attack is already running, don't interfere
+                                pass
+                            else:
+                                # Traditional attack - spam input
+                                if not self._mouse_down and not self._x_key_down:
+                                    self._send_attack_input(down=True)
+                                    input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
+                                    self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (FIRE)")
                             
                             if phase_elapsed >= self._get_fire_duration():
-                                if self._mouse_down or self._x_key_down:
-                                    self._send_attack_input(down=False)
-                                    input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
-                                    self.logger.info(f"[ATTACK INPUT] {input_type} UP (FIRE COMPLETE)")
+                                # Stop custom attack or traditional attack
+                                if self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled():
+                                    if self.custom_attack_manager.player.playing:
+                                        self.custom_attack_manager.stop_attack()
+                                        self.logger.info("[CUSTOM ATTACK] Fire phase complete - stopped custom sequence")
+                                else:
+                                    if self._mouse_down or self._x_key_down:
+                                        self._send_attack_input(down=False)
+                                        input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
+                                        self.logger.info(f"[ATTACK INPUT] {input_type} UP (FIRE COMPLETE)")
                                 
                                 # Press '1' before starting E spam sequence
                                 pydirectinput.press('1')

@@ -185,6 +185,16 @@ if errorlevel 1 (
     echo ✓ PySide6 installed
 )
 
+echo Installing requests ^(for Discord webhooks^)...
+python -m pip install requests >nul 2>&1
+if errorlevel 1 (
+    echo ✗ requests failed
+    set FAILED_PACKAGES=!FAILED_PACKAGES! requests
+    set /a FAILED_COUNT+=1
+) else (
+    echo ✓ requests installed
+)
+
 echo Installing ultralytics ^(YOLOv8 - this may take a while^)...
 python -m pip install ultralytics >nul 2>&1
 if errorlevel 1 (
@@ -281,6 +291,14 @@ if errorlevel 1 (
     echo ✓ PySide6 working
 )
 
+python -c "import requests" 2>nul
+if errorlevel 1 (
+    echo ✗ requests import failed
+    set VERIFY_FAILED=1
+) else (
+    echo ✓ requests working
+)
+
 python -c "from ultralytics import YOLO" 2>nul
 if errorlevel 1 (
     echo ✗ ultralytics import failed
@@ -315,9 +333,13 @@ echo   Installation Complete!
 echo ========================================
 echo.
 echo To run SantaMacro:
-echo   • Double-click "run_dev.bat" for development with terminal
 echo   • Double-click "run.bat" for silent background mode
-echo   • Or run ".venv\Scripts\python.exe src\main.py"
+echo   • Double-click "run_dev.bat" for development with terminal
+echo.
+echo NEW FEATURES:
+echo   • Settings button in overlay for custom attacks
+echo   • Discord webhook notifications
+echo   • Record your own attack sequences
 echo.
 echo Press any key to exit...
 pause >nul
