@@ -6,9 +6,24 @@ import time
 import json
 import threading
 from typing import List, Tuple, Any, Optional, Dict
-from pynput import mouse, keyboard
+from pynput import keyboard
 import pyautogui
 import pydirectinput
+import ctypes
+from ctypes import wintypes
+import ctypes.wintypes
+
+# Windows mouse hook constants
+WH_MOUSE_LL = 14
+WM_LBUTTONDOWN = 0x0201
+WM_LBUTTONUP = 0x0202
+WM_RBUTTONDOWN = 0x0204
+WM_RBUTTONUP = 0x0205
+WM_MBUTTONDOWN = 0x0207
+WM_MBUTTONUP = 0x0208
+
+# Hook procedure type
+HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
 
 
 class ActionRecorder:
@@ -20,12 +35,55 @@ class ActionRecorder:
         self.start_time: Optional[float] = None
         
         # Input listeners
-        self.mouse_listener: Optional[mouse.Listener] = None
         self.keyboard_listener: Optional[keyboard.Listener] = None
         
-        # Recording state
-        self.last_mouse_pos = None
-        self.mouse_pressed = False
+        # Mouse polling
+        self.mouse_thread = None
+        self.mouse_thread_running = False
+        self.last_mouse_state = {"left": False, "right": False, "middle": False}
+    
+    def _poll_mouse_state(self):
+        """Poll mouse button states using Windows API"""
+        import ctypes
+        
+        print("🖱️ Mouse polling thread started")
+        
+        while self.mouse_thread_running and self.recording:
+            try:
+                # Check mouse button states using Windows API
+                left_pressed = bool(ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000)
+                right_pressed = bool(ctypes.windll.user32.GetAsyncKeyState(0x02) & 0x8000)
+                middle_pressed = bool(ctypes.windll.user32.GetAsyncKeyState(0x04) & 0x8000)
+                
+                current_state = {"left": left_pressed, "right": right_pressed, "middle": middle_pressed}
+                
+                # Check for state changes
+                for button, pressed in current_state.items():
+                    if pressed != self.last_mouse_state[button]:
+                        print(f"🖱️ MOUSE STATE CHANGE: {button} {'pressed' if pressed else 'released'}")
+                        self._record_mouse_event(button, pressed)
+                        self.last_mouse_state[button] = pressed
+                
+                time.sleep(0.01)  # Poll every 10ms
+                
+            except Exception as e:
+                print(f"❌ Mouse polling error: {e}")
+                break
+        
+        print("🖱️ Mouse polling thread stopped")
+    
+    def _record_mouse_event(self, button: str, pressed: bool):
+        """Record a mouse event"""
+        print(f"🖱️ WINDOWS HOOK: {button} {'pressed' if pressed else 'released'}")
+        
+        if not self.recording:
+            return
+        
+        timestamp = self._get_timestamp()
+        action_type = "key_press" if pressed else "key_release"
+        
+        print(f"✅ Recording mouse event: {action_type} {button} at {timestamp:.3f}s")
+        self.actions.append((timestamp, action_type, button))
     
     def start_recording(self):
         """Start recording user actions"""
@@ -37,20 +95,34 @@ class ActionRecorder:
         self.start_time = time.time()
         
         print("🔴 Recording started! Perform your attack sequence...")
+        print("🖱️ Mouse polling will capture clicks")
+        print("⌨️ Keyboard listener will capture keys (except F3)")
         
-        # Start input listeners
-        self.mouse_listener = mouse.Listener(
-            on_click=self._on_mouse_click,
-            on_move=self._on_mouse_move
-        )
-        
-        self.keyboard_listener = keyboard.Listener(
-            on_press=self._on_key_press,
-            on_release=self._on_key_release
-        )
-        
-        self.mouse_listener.start()
-        self.keyboard_listener.start()
+        try:
+            # Reset mouse state
+            self.last_mouse_state = {"left": False, "right": False, "middle": False}
+            
+            # Start mouse polling thread
+            self.mouse_thread_running = True
+            self.mouse_thread = threading.Thread(target=self._poll_mouse_state, daemon=True)
+            self.mouse_thread.start()
+            print("✅ Mouse polling thread started!")
+            
+            # Start keyboard listener
+            self.keyboard_listener = keyboard.Listener(
+                on_press=self._on_key_press,
+                on_release=self._on_key_release,
+                suppress=False
+            )
+            
+            self.keyboard_listener.start()
+            print("✅ Keyboard listener started!")
+            
+        except Exception as e:
+            print(f"❌ Error starting recording: {e}")
+            import traceback
+            traceback.print_exc()
+            self.recording = False
     
     def stop_recording(self) -> List[Tuple[float, str, Any]]:
         """Stop recording and return the recorded actions"""
@@ -59,14 +131,17 @@ class ActionRecorder:
         
         self.recording = False
         
-        # Stop listeners
-        if self.mouse_listener:
-            self.mouse_listener.stop()
-            self.mouse_listener = None
+        # Stop mouse polling
+        self.mouse_thread_running = False
+        if self.mouse_thread and self.mouse_thread.is_alive():
+            self.mouse_thread.join(timeout=1.0)
+            print("✅ Mouse polling thread stopped")
         
+        # Stop keyboard listener
         if self.keyboard_listener:
             self.keyboard_listener.stop()
             self.keyboard_listener = None
+            print("✅ Keyboard listener stopped")
         
         # Add end marker
         if self.start_time:
@@ -82,43 +157,6 @@ class ActionRecorder:
             return 0.0
         return time.time() - self.start_time
     
-    def _on_mouse_click(self, x: int, y: int, button: mouse.Button, pressed: bool):
-        """Handle mouse click events"""
-        if not self.recording:
-            return
-        
-        timestamp = self._get_timestamp()
-        button_name = button.name  # 'left', 'right', 'middle'
-        action_type = "mouse_press" if pressed else "mouse_release"
-        
-        self.actions.append((timestamp, action_type, {
-            "button": button_name,
-            "position": (x, y)
-        }))
-        
-        self.mouse_pressed = pressed
-    
-    def _on_mouse_move(self, x: int, y: int):
-        """Handle mouse movement (only record significant movements during drag)"""
-        if not self.recording or not self.mouse_pressed:
-            return
-        
-        # Only record movement if mouse is pressed (dragging)
-        if self.last_mouse_pos is None:
-            self.last_mouse_pos = (x, y)
-            return
-        
-        # Check if movement is significant enough to record
-        last_x, last_y = self.last_mouse_pos
-        distance = ((x - last_x) ** 2 + (y - last_y) ** 2) ** 0.5
-        
-        if distance > 10:  # Only record moves > 10 pixels
-            timestamp = self._get_timestamp()
-            self.actions.append((timestamp, "mouse_move", {
-                "position": (x, y)
-            }))
-            self.last_mouse_pos = (x, y)
-    
     def _on_key_press(self, key):
         """Handle key press events"""
         if not self.recording:
@@ -133,11 +171,20 @@ class ActionRecorder:
             else:
                 key_name = key.name
             
+            # Skip F3 key since it's used for recording control
+            if key_name.lower() == 'f3':
+                print("🚫 Skipping F3 key from recording")
+                return
+            
+            print(f"⌨️ Recording key press: {key_name} at {timestamp:.3f}s")
             self.actions.append((timestamp, "key_press", key_name))
             
         except AttributeError:
             # Handle special keys that don't have char attribute
-            self.actions.append((timestamp, "key_press", str(key)))
+            key_str = str(key)
+            if 'f3' not in key_str.lower():
+                print(f"⌨️ Recording special key press: {key_str} at {timestamp:.3f}s")
+                self.actions.append((timestamp, "key_press", key_str))
     
     def _on_key_release(self, key):
         """Handle key release events"""
@@ -152,10 +199,18 @@ class ActionRecorder:
             else:
                 key_name = key.name
             
+            # Skip F3 key since it's used for recording control
+            if key_name.lower() == 'f3':
+                return
+            
+            print(f"⌨️ Recording key release: {key_name} at {timestamp:.3f}s")
             self.actions.append((timestamp, "key_release", key_name))
             
         except AttributeError:
-            self.actions.append((timestamp, "key_release", str(key)))
+            key_str = str(key)
+            if 'f3' not in key_str.lower():
+                print(f"⌨️ Recording special key release: {key_str} at {timestamp:.3f}s")
+                self.actions.append((timestamp, "key_release", key_str))
 
 
 class ActionPlayer:
@@ -268,36 +323,7 @@ class ActionPlayer:
     def _execute_action(self, action_type: str, action_data: Any):
         """Execute a single action"""
         try:
-            if action_type == "mouse_press":
-                button = action_data["button"]
-                pos = action_data["position"]
-                
-                # Move to position first
-                pyautogui.moveTo(pos[0], pos[1])
-                
-                # Press button
-                if button == "left":
-                    pyautogui.mouseDown(button='left')
-                elif button == "right":
-                    pyautogui.mouseDown(button='right')
-                elif button == "middle":
-                    pyautogui.mouseDown(button='middle')
-            
-            elif action_type == "mouse_release":
-                button = action_data["button"]
-                
-                if button == "left":
-                    pyautogui.mouseUp(button='left')
-                elif button == "right":
-                    pyautogui.mouseUp(button='right')
-                elif button == "middle":
-                    pyautogui.mouseUp(button='middle')
-            
-            elif action_type == "mouse_move":
-                pos = action_data["position"]
-                pyautogui.moveTo(pos[0], pos[1])
-            
-            elif action_type == "key_press":
+            if action_type == "key_press":
                 key = action_data
                 self._press_key(key, True)
             
@@ -312,9 +338,17 @@ class ActionPlayer:
             print(f"❌ Error executing action {action_type}: {e}")
     
     def _press_key(self, key: str, press: bool):
-        """Press or release a key"""
+        """Press or release a key or mouse button"""
         try:
-            # Handle special keys
+            # Handle mouse buttons
+            if key in ['left', 'right', 'middle']:
+                if press:
+                    pyautogui.mouseDown(button=key)
+                else:
+                    pyautogui.mouseUp(button=key)
+                return
+            
+            # Handle keyboard keys
             key_mapping = {
                 'space': 'space',
                 'enter': 'enter',
@@ -337,7 +371,7 @@ class ActionPlayer:
                 pydirectinput.keyUp(mapped_key)
                 
         except Exception as e:
-            print(f"❌ Error with key {key}: {e}")
+            print(f"❌ Error with key/button {key}: {e}")
 
 
 class CustomAttackManager:

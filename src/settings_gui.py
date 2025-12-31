@@ -12,6 +12,7 @@ import zipfile
 from typing import Dict, List, Any, Optional
 from pynput import mouse, keyboard as pynput_keyboard
 from datetime import datetime
+from action_system import ActionRecorder as FullActionRecorder
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -328,95 +329,6 @@ class RecordingConfirmDialog(QDialog):
         layout.addWidget(button_box)
 
 
-class ActionRecorder:
-    """Records user actions for custom attack sequences"""
-    
-    def __init__(self):
-        self.recording = False
-        self.actions = []
-        self.start_time = None
-        self.mouse_listener = None
-        self.keyboard_listener = None
-    
-    def start_recording(self):
-        """Start recording actions"""
-        self.recording = True
-        self.actions = []
-        self.start_time = time.time()
-        
-        # Start listeners
-        self.mouse_listener = mouse.Listener(on_click=self._on_mouse_click)
-        self.keyboard_listener = pynput_keyboard.Listener(
-            on_press=self._on_key_press,
-            on_release=self._on_key_release
-        )
-        
-        self.mouse_listener.start()
-        self.keyboard_listener.start()
-    
-    def stop_recording(self):
-        """Stop recording and return actions"""
-        self.recording = False
-        
-        if self.mouse_listener:
-            self.mouse_listener.stop()
-        if self.keyboard_listener:
-            self.keyboard_listener.stop()
-        
-        if self.actions:
-            elapsed = time.time() - self.start_time
-            self.actions.append([elapsed, "end_marker", None])
-        
-        return self.actions.copy()
-    
-    def _on_mouse_click(self, x, y, button, pressed):
-        """Handle mouse click events"""
-        if not self.recording:
-            return
-        
-        timestamp = time.time() - self.start_time
-        action_type = "mouse_press" if pressed else "mouse_release"
-        
-        self.actions.append([timestamp, action_type, {
-            "button": button.name,
-            "position": [x, y]
-        }])
-    
-    def _on_key_press(self, key):
-        """Handle key press events"""
-        if not self.recording:
-            return
-        
-        timestamp = time.time() - self.start_time
-        
-        try:
-            if hasattr(key, 'char') and key.char is not None:
-                key_name = key.char
-            else:
-                key_name = key.name
-            
-            self.actions.append([timestamp, "key_press", key_name])
-        except AttributeError:
-            self.actions.append([timestamp, "key_press", str(key)])
-    
-    def _on_key_release(self, key):
-        """Handle key release events"""
-        if not self.recording:
-            return
-        
-        timestamp = time.time() - self.start_time
-        
-        try:
-            if hasattr(key, 'char') and key.char is not None:
-                key_name = key.char
-            else:
-                key_name = key.name
-            
-            self.actions.append([timestamp, "key_release", key_name])
-        except AttributeError:
-            self.actions.append([timestamp, "key_release", str(key)])
-
-
 class SettingsGUI(QMainWindow):
     """Simple settings GUI for SantaMacro using PySide6"""
     
@@ -435,7 +347,7 @@ class SettingsGUI(QMainWindow):
         super().__init__()
         self.config_path = config_path
         self.config = {}
-        self.recorder = ActionRecorder()
+        self.recorder = FullActionRecorder()
         self.recording_active = False
         self.f3_monitoring_ready = False  # Prevent F3 handling during startup
         
