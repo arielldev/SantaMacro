@@ -1,21 +1,33 @@
-# SantaMacro - Grand Piece Online Santa Event Bot
+[![Discord](https://img.shields.io/badge/Discord-Join%20Server-7289da?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/unPZxXAtfb)
 
-A simple automation tool for the Grand Piece Online Santa event. Records custom attack sequences and sends Discord notifications.
+# SantaMacro - Grand Piece Online Santa Event Automation
 
-## Features
+Automated Santa tracking and combat system for Grand Piece Online using YOLOv8 computer vision.
 
-- **Custom Attack Recording**: Record your own attack combos with mouse and keyboard
-- **Discord Webhooks**: Get notifications when Santa is found, attacks happen, etc.
-- **Easy Setup**: Settings GUI accessible from the overlay
+## Core Features
+
+- **Santa Detection**: Real-time Santa tracking using YOLOv8 model (Model.pt)
+- **Computer Vision**: Advanced object detection with configurable confidence thresholds
+- **Custom Attack Recording**: Record and replay your own attack combos
+- **Discord Webhooks**: Get notifications when Santa is detected, attacks happen, etc.
 - **Multiple Attack Modes**: Custom sequences, Megapow, or Cyborg modes
+- **Live Overlay**: Real-time detection overlay with settings access
+
+## How It Works
+
+1. **YOLOv8 Detection**: Uses Model.pt to detect Santa in real-time screen captures
+2. **Automated Tracking**: Continuously scans for Santa with configurable detection confidence
+3. **Smart Combat**: Executes attack sequences when Santa is detected
+4. **Notification System**: Sends Discord alerts for key events (detection, attacks, session stats)
 
 ## Quick Start
 
-1. Run `install.bat` to install dependencies
-2. Launch with `run.bat`
-3. Click the settings button in the overlay to configure
-4. Record your attack sequence
-5. Press F1 to start hunting
+1. Ensure you have **Model.pt** in the root folder
+2. Run `install.bat` to install dependencies
+3. Launch with `run.bat`
+4. Click the settings button in the overlay to configure detection thresholds
+5. Record your attack sequence or use built-in modes
+6. Press F1 to start Santa hunting
 
 ## Controls
 
@@ -40,16 +52,26 @@ A simple automation tool for the Grand Piece Online Santa event. Records custom 
 
 ## Requirements
 
-- Python 3.12 or 3.13 (3.14+ not supported)
-- Windows (uses Windows-specific libraries)
-- Model.pt file (YOLOv8 detection model)
+- **Python 3.12 or 3.13** (3.14+ not supported due to PyTorch compatibility)
+- **Windows** (uses Windows-specific libraries)
+- **Model.pt file** - YOLOv8 detection model (required for Santa detection)
+- **GPU recommended** for faster YOLO inference
 
 ## Installation
 
 1. Install Python 3.12/3.13 with "Add to PATH" checked
 2. Download and extract SantaMacro
-3. Run `install.bat`
-4. Launch with `run.bat`
+3. **Place Model.pt in the root folder** (same directory as run.bat)
+4. Run `install.bat` to install dependencies
+5. Launch with `run.bat`
+
+## Detection Configuration
+
+The YOLO model uses these key settings in config.json:
+
+- **Detection threshold**: Confidence level for Santa detection (0.15-0.25 recommended)
+- **Screen region**: Area to scan for Santa
+- **Attack delay**: Time between detection and attack execution
 
 ## File Structure
 
@@ -64,152 +86,22 @@ SantaMacro/
 
 ## Troubleshooting
 
-**Settings won't open**: Run `install.bat` to install missing packages
+**"Model.pt not found"**: Ensure Model.pt is in the root directory (same folder as run.bat)
 
-**No detection**: Make sure Model.pt is in the root folder
+**No Santa detection**:
+
+- Verify Model.pt is a valid YOLOv8 model
+- Adjust detection threshold in settings (try 0.15-0.25)
+- Check if Santa is visible on screen
+
+**Settings won't open**: Run `install.bat` to install missing packages
 
 **Recording doesn't work**: Press F3 while the settings window is open
 
 **Webhook failed**: Check your Discord webhook URL is correct
 
+**Poor performance**: Consider using GPU acceleration for YOLO inference
+
 ## License
 
-Opevailable webhook events:\*\*
-
-- Santa Detected/Lost
-- Attack Started/Completed
-- Macro Started/Stopped (with session stats)
-
----
-
-## 🎮 Controls
-
-### Hotkeys
-
-- **F1** - Start/Stop tracking (toggle)
-- **ESC** - Emergency stop and exit
-- **⚙️ Settings Button** - Click in overlay to open settings
-
-### Attack Modes
-
-- **Custom Mode**: Uses your recorded attack sequence (when enabled)
-- **Megapow Mode**: Traditional high-damage attack (5s duration)
-- **Cyborg Mode**: Traditional sustained attack (15s duration)
-
----
-
-## 📦 Installation
-
-### ⚠️ Requirements
-
-**Python Version**: 3.12 or 3.13 (3.14+ not supported due to PyTorch compatibility)
-
-**Dependencies:**
-
-```bash
-pip install PySide6 numpy opencv-python mss pyautogui pydirectinput pynput requests ultralytics
-```
-
-### 🚀 Easy Installation
-
-1. **Install Python 3.12/3.13** with "Add to PATH" checked
-2. **Download SantaMacro** and extract to folder
-3. **Run installer**: `install.bat`
-4. **Launch**: `run.bat` or `run_dev.bat`
-
----
-
-## 📁 File Structure
-
-```
-SantaMacro/
-├── src/
-│   ├── main.py              # Application entry point
-│   ├── macro.py             # Core detection and automation logic
-│   ├── overlay_qt.py        # Qt-based UI overlay with settings button
-│   ├── settings_gui.py      # Settings configuration GUI
-│   ├── webhook_manager.py   # Discord webhook system
-│   └── action_system.py     # Custom attack recording/playback
-├── config.json             # Configuration (auto-updated with new settings)
-├── Model.pt               # YOLOv8 model (required)
-├── install.bat            # Easy installation script
-├── run.bat               # Silent mode launcher
-└── run_dev.bat           # Dev mode with console
-```
-
----
-
-## 🔧 Troubleshooting
-
-### New Features Issues
-
-**"No custom attack sequence found"**
-
-- Record a sequence in Settings → Attack Settings first
-- Ensure "Enable Custom Attack Sequence" is checked
-
-**"Webhook test failed"**
-
-- Verify Discord webhook URL is correct
-- Check internet connection and install `requests`: `pip install requests`
-
-**"Settings GUI won't open"**
-
-- Ensure all packages installed: run `install.bat`
-- Try running from command line to see error messages
-
-### Legacy Issues
-
-**"Model.pt not found"**
-
-- Ensure Model.pt is in root directory
-- Download from original source if missing
-
-**Detection not working**
-
-- Original detection system still used
-- Adjust threshold in config.json (0.15-0.25)
-- Verify Model.pt is valid YOLOv8 model
-
----
-
-## 🔄 Migration from Previous Versions
-
-Your existing setup will work with minimal changes:
-
-✅ **Automatic**: `config.json` is auto-updated with new settings  
-✅ **Compatible**: Original attack modes (megapow/cyborg) still work  
-✅ **Optional**: New features are opt-in via settings  
-✅ **Improved**: Settings button added to overlay for easy access
-
-**To use new features:**
-
-1. Run `run.bat` or `run_dev.bat`
-2. Click ⚙️ settings button in overlay
-3. Configure custom attacks and/or webhooks
-4. Save and restart macro
-
----
-
-## ✨ What's Different
-
-### Added
-
-- ✅ Custom attack recording system
-- ✅ Discord webhook notifications
-- ✅ Settings GUI accessible from overlay
-- ✅ Simple tkinter-based interface
-
-### Improved
-
-- 🔄 Easy access to settings via overlay button
-- 🔄 Streamlined user experience
-- 🔄 Better integration with existing workflow
-
----
-
-## 📜 License & Disclaimer
-
 Open source project for educational purposes. Use responsibly and in accordance with game terms of service.
-
-**Safety**: All code is transparent and verifiable. No viruses, no hidden behavior.
