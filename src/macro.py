@@ -17,7 +17,7 @@ from pynput import keyboard
 import platform
 import ctypes
 from ctypes import wintypes
-from overlay_qt import OverlayQt
+from .overlay_qt import OverlayQt
 import glob
 
 VK_LEFT = 0x25
@@ -105,9 +105,6 @@ class SantaMacro:
         self._search_direction_start = None
         self._search_direction_duration = 3.0  # Switch directions every 3 seconds
         
-        self.attack_mode = "custom"
-        self.attack_phase = "idle"
-        self.attack_phase_start = 0.0
         self.attack_committed = False
         
         # Initialize custom attack manager
@@ -347,26 +344,7 @@ class SantaMacro:
         
         self.logger.info("[MINIMAL MODE] Santa Lock-on Mode ENABLED")
 
-    def _get_load_duration(self):
-        """Get load duration for current attack mode"""
-        if self.attack_mode == "custom":
-            return self.click_load_ms / 1000.0  # Convert ms to seconds
-        else:
-            return getattr(self, f"{self.attack_mode}_load_duration", 1.0)  # Default 1 second
-    
-    def _get_fire_duration(self):
-        """Get fire duration for current attack mode"""
-        if self.attack_mode == "custom":
-            return self.click_shoot_ms / 1000.0  # Convert ms to seconds
-        else:
-            return getattr(self, f"{self.attack_mode}_fire_duration", 5.0)  # Default 5 seconds
-    
-    def _get_cooldown_duration(self):
-        """Get cooldown duration for current attack mode"""
-        if self.attack_mode == "custom":
-            return self.click_cooldown_ms / 1000.0  # Convert ms to seconds
-        else:
-            return getattr(self, f"{self.attack_mode}_cooldown_duration", 6.0)  # Default 6 seconds
+
 
     def _setup_logger(self, log_cfg: dict) -> logging.Logger:
         logger = logging.getLogger("SantaMacro")
@@ -1307,21 +1285,30 @@ class SantaMacro:
     
     def _send_attack_input(self, down: bool = True):
         """Send attack input using custom attack system"""
-        if self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled():
-            if down and not self.custom_attack_manager.player.playing:
-                # Start custom attack sequence
-                self.custom_attack_manager.play_custom_attack(loop=True)
-                self.logger.info("[CUSTOM ATTACK] Started custom attack sequence")
-            elif not down and self.custom_attack_manager.player.playing:
-                # Stop custom attack sequence
-                self.custom_attack_manager.stop_attack()
-                self.logger.info("[CUSTOM ATTACK] Stopped custom attack sequence")
-        else:
-            # Fallback to simple left click
-            if down:
-                self._send_mouse_click(down=True)
-            else:
-                self._send_mouse_click(down=False)
+        if not self.custom_attack_manager:
+            self.logger.error("[ATTACK] No custom attack manager available!")
+            return
+        
+        if not self.custom_attack_manager.has_custom_sequence():
+            self.logger.warning("[ATTACK] No custom sequence recorded! Please record one in settings.")
+            return
+        
+        if down and not self.custom_attack_manager.player.playing:
+            # Start custom attack sequence
+            self.custom_attack_manager.play_custom_attack(loop=True)
+            self.logger.info("[CUSTOM ATTACK] Started custom attack sequence")
+        elif not down and self.custom_attack_manager.player.playing:
+            # Stop custom attack sequence
+            self.custom_attack_manager.stop_attack()
+            self.logger.info("[CUSTOM ATTACK] Stopped custom attack sequence")
+    
+    def _get_load_duration(self) -> float:
+        """Get load phase duration for custom attacks"""
+        return float(self.cfg.get("clicks", {}).get("load_ms", 1000)) / 1000.0
+    
+    def _get_fire_duration(self) -> float:
+        """Get fire phase duration for custom attacks"""
+        return float(self.cfg.get("clicks", {}).get("shoot_ms", 5000)) / 1000.0
     
     def toggle_attack_mode(self):
         """Toggle custom attack mode on/off"""
@@ -1931,7 +1918,7 @@ class SantaMacro:
                     det = DetectionResult(bbox=None, confidence=0.0)
                     if self.overlay_enabled:
                         self._update_fps()
-                        self._draw_overlay(frame_bgr, det, None, attack_mode=self.attack_mode)
+                        self._draw_overlay(frame_bgr, det, None, attack_mode="custom")
                     time.sleep(self.idle_backoff_ms / 1000.0)
                     continue
 
@@ -1942,7 +1929,7 @@ class SantaMacro:
                         self._click_up()
                     if self.overlay_enabled:
                         self._update_fps()
-                        self._draw_overlay(frame_bgr, det, None, attack_mode=self.attack_mode)
+                        self._draw_overlay(frame_bgr, det, None, attack_mode="custom")
                     time.sleep(self.tick_interval)
                     continue
                 
@@ -2436,7 +2423,7 @@ class SantaMacro:
                                 # Traditional attack - spam input
                                 if not self._mouse_down and not self._x_key_down:
                                     self._send_attack_input(down=True)
-                                    input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
+                                    input_type = "CUSTOM SEQUENCE"
                                     self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (LOAD)")
                             
                             if phase_elapsed >= self._get_load_duration():
@@ -2446,7 +2433,7 @@ class SantaMacro:
                                 self._has_attacked_successfully = True
                                 self.logger.info("[MEGAPOW] Stage 1 complete -> Stage 2: FIRE started (5.0s)")
                             elif self._debug_log_counter % 25 == 0:
-                                mode_name = self.attack_mode.upper()
+                                mode_name = "CUSTOM"
                                 self.logger.info(f"[{mode_name}] Stage 1: LOAD ({phase_elapsed:.1f}s/{self._get_load_duration()}s)")
                         
                         elif self.attack_phase == "fire":
@@ -2460,7 +2447,7 @@ class SantaMacro:
                                 # Traditional attack - spam input
                                 if not self._mouse_down and not self._x_key_down:
                                     self._send_attack_input(down=True)
-                                    input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
+                                    input_type = "CUSTOM SEQUENCE"
                                     self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (FIRE)")
                             
                             if phase_elapsed >= self._get_fire_duration():
@@ -2472,7 +2459,7 @@ class SantaMacro:
                                 else:
                                     if self._mouse_down or self._x_key_down:
                                         self._send_attack_input(down=False)
-                                        input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
+                                        input_type = "CUSTOM SEQUENCE"
                                         self.logger.info(f"[ATTACK INPUT] {input_type} UP (FIRE COMPLETE)")
                                 
                                 # Press '1' before starting E spam sequence
@@ -2483,7 +2470,7 @@ class SantaMacro:
                                 self.attack_phase_start = current_time
                                 self.logger.info("[MEGAPOW] Stage 2 complete -> Stage 3: COOLDOWN started (5.2s)")
                             elif self._debug_log_counter % 25 == 0:
-                                mode_name = self.attack_mode.upper()
+                                mode_name = "CUSTOM"
                                 self.logger.info(f"[{mode_name}] Stage 2: FIRE ({phase_elapsed:.1f}s/{self._get_fire_duration()}s)")
                         
                         if self.overlay_enabled:
@@ -2492,7 +2479,7 @@ class SantaMacro:
                             overlay_y = y1 + self.roi["top"]
                             overlay_bbox = (overlay_x, overlay_y, w, h)
                             det = DetectionResult(bbox=overlay_bbox, confidence=best_santa['confidence'])
-                            self._draw_overlay(frame_bgr, det, (target_x, target_y), attack_mode=self.attack_mode)
+                            self._draw_overlay(frame_bgr, det, (target_x, target_y), attack_mode="custom")
                     else:
                         if not self._running:
                             self.logger.info("[STOP] Stopping in no-detection branch")
@@ -2515,7 +2502,7 @@ class SantaMacro:
                         if frames_since_detection <= self._detection_grace_frames and self._last_detection_frame >= 0:
                             if self.attack_phase in ["load", "fire"] and not self._mouse_down and not self._x_key_down:
                                 self._send_attack_input(down=True)
-                                input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
+                                input_type = "CUSTOM SEQUENCE"
                                 self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (GRACE PERIOD)")
                             
                             current_time = time.time()
@@ -2524,7 +2511,7 @@ class SantaMacro:
                             if self.attack_phase == "fire" and phase_elapsed >= self._get_fire_duration():
                                 if self._mouse_down or self._x_key_down:
                                     self._send_attack_input(down=False)
-                                    input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
+                                    input_type = "CUSTOM SEQUENCE"
                                     self.logger.info(f"[ATTACK INPUT] {input_type} UP (GRACE FIRE COMPLETE)")
                                 
                                 # Press '1' before starting E spam sequence
@@ -2533,7 +2520,7 @@ class SantaMacro:
                                 
                                 self.attack_phase = "cooldown"
                                 self.attack_phase_start = current_time
-                                mode_name = self.attack_mode.upper()
+                                mode_name = "CUSTOM"
                                 self.logger.info(f"[{mode_name}] Stage 2 complete (grace) -> Stage 3: COOLDOWN")
                             elif self.attack_phase == "cooldown":
                                 pydirectinput.press('e')
@@ -2571,7 +2558,7 @@ class SantaMacro:
                                         # Fire complete, go to cooldown
                                         if self._mouse_down or self._x_key_down:
                                             self._send_attack_input(down=False)
-                                            input_type = "X KEY" if self.attack_mode == "cyborg" else "LEFT BUTTON"
+                                            input_type = "CUSTOM SEQUENCE"
                                             self.logger.info(f"[FIRE COMPLETE] {input_type} UP (no visual)")
                                         
                                         # Press '1' before starting E spam sequence
@@ -2582,7 +2569,7 @@ class SantaMacro:
                                         self.attack_phase_start = time.time()
                                         self.attack_committed = True
                                         self._has_attacked_successfully = True
-                                        mode_name = self.attack_mode.upper()
+                                        mode_name = "CUSTOM"
                                         self.logger.info(f"[{mode_name}] Fire complete (lost visual) -> Starting COOLDOWN")
                                     else:
                                         # Keep firing even without visual
@@ -2646,7 +2633,7 @@ class SantaMacro:
                         if self.overlay_enabled:
                             self._update_fps()
                             det = DetectionResult(bbox=None, confidence=0.0)
-                            self._draw_overlay(frame_bgr, det, None, attack_mode=self.attack_mode)
+                            self._draw_overlay(frame_bgr, det, None, attack_mode="custom")
                     
                     self._debug_log_counter += 1
                     time.sleep(self.tick_interval)
@@ -3095,7 +3082,7 @@ class SantaMacro:
 
                 self._update_fps()
                 if self.overlay_enabled:
-                    self._draw_overlay(frame_bgr, det, aim, attack_mode=self.attack_mode)
+                    self._draw_overlay(frame_bgr, det, aim, attack_mode="custom")
                 self._save_dump_if_needed(frame_bgr, det)
 
                 elapsed = time.time() - start_ts

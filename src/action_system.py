@@ -444,7 +444,14 @@ class CustomAttackManager:
     def is_custom_enabled(self) -> bool:
         """Check if custom attack mode is enabled"""
         attack_settings = self.config.get("attack_settings", {})
-        return attack_settings.get("custom_sequence_enabled", False)
+        enabled = attack_settings.get("custom_sequence_enabled", False)
+        
+        print(f"🔍 is_custom_enabled check:")
+        print(f"   - attack_settings: {attack_settings}")
+        print(f"   - custom_sequence_enabled: {enabled}")
+        print(f"   - has_sequence: {self.has_custom_sequence()}")
+        
+        return enabled
     
     def has_custom_sequence(self) -> bool:
         """Check if a custom sequence exists"""
