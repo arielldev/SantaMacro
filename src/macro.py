@@ -107,6 +107,10 @@ class SantaMacro:
         
         self.attack_committed = False
         
+        # Attack phase tracking
+        self.attack_phase = "idle"
+        self.attack_phase_start: Optional[float] = None
+        
         # Initialize custom attack manager
         try:
             from action_system import CustomAttackManager
@@ -1310,6 +1314,10 @@ class SantaMacro:
         """Get fire phase duration for custom attacks"""
         return float(self.cfg.get("clicks", {}).get("shoot_ms", 5000)) / 1000.0
     
+    def _get_cooldown_duration(self) -> float:
+        """Get cooldown phase duration for custom attacks"""
+        return float(self.cfg.get("clicks", {}).get("cooldown_ms", 6000)) / 1000.0
+    
     def toggle_attack_mode(self):
         """Toggle custom attack mode on/off"""
         if self.custom_attack_manager:
@@ -2092,6 +2100,8 @@ class SantaMacro:
                     current_time = time.time()
                     
                     if self.attack_phase == "cooldown" and best_santa:
+                        if self.attack_phase_start is None:
+                            self.attack_phase_start = current_time
                         phase_elapsed = current_time - self.attack_phase_start
                         if phase_elapsed >= self._get_cooldown_duration():
                             # CRITICAL: Before restarting attack, validate Santa's position
@@ -2404,6 +2414,8 @@ class SantaMacro:
                             self.attack_committed = False
                             self.logger.info(f"[MEGAPOW] Stage 1: LOAD started (1.0s) - Santa detected!")
                         elif self.attack_phase == "cooldown":
+                            if self.attack_phase_start is None:
+                                self.attack_phase_start = current_time
                             phase_elapsed = current_time - self.attack_phase_start
                             
                             pydirectinput.press('e')
@@ -2411,6 +2423,8 @@ class SantaMacro:
                                 self.logger.info(f"[COOLDOWN] Spamming E during cooldown ({phase_elapsed:.1f}s/{self._get_cooldown_duration()}s)")
                         
                         if self.attack_phase == "load":
+                            if self.attack_phase_start is None:
+                                self.attack_phase_start = current_time
                             phase_elapsed = current_time - self.attack_phase_start
                             
                             # For custom attacks, only start once, don't spam
@@ -2437,6 +2451,8 @@ class SantaMacro:
                                 self.logger.info(f"[{mode_name}] Stage 1: LOAD ({phase_elapsed:.1f}s/{self._get_load_duration()}s)")
                         
                         elif self.attack_phase == "fire":
+                            if self.attack_phase_start is None:
+                                self.attack_phase_start = current_time
                             phase_elapsed = current_time - self.attack_phase_start
                             
                             # For custom attacks, don't spam input - let custom sequence handle it
@@ -2506,6 +2522,8 @@ class SantaMacro:
                                 self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (GRACE PERIOD)")
                             
                             current_time = time.time()
+                            if self.attack_phase_start is None:
+                                self.attack_phase_start = current_time
                             phase_elapsed = current_time - self.attack_phase_start
                             
                             if self.attack_phase == "fire" and phase_elapsed >= self._get_fire_duration():
