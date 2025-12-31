@@ -17,7 +17,7 @@ from pynput import keyboard
 import platform
 import ctypes
 from ctypes import wintypes
-from .overlay_qt import OverlayQt
+from overlay_qt import OverlayQt
 import glob
 
 VK_LEFT = 0x25
