@@ -176,6 +176,16 @@ class ActionRecorder:
                 print("🚫 Skipping F3 key from recording")
                 return
             
+            # Track if this key is being held without release
+            if not hasattr(self, '_held_keys'):
+                self._held_keys = set()
+            
+            # Only record the first press - skip repeated presses while held
+            if key_name in self._held_keys:
+                # Key is already held down, skip recording
+                return
+            
+            self._held_keys.add(key_name)
             print(f"⌨️ Recording key press: {key_name} at {timestamp:.3f}s")
             self.actions.append((timestamp, "key_press", key_name))
             
@@ -255,11 +265,31 @@ class ActionPlayer:
         self.playing = True
         
         try:
+            # Get all unique keys from the sequence for cleanup
+            all_keys = set()
+            for _, action_type, action_data in actions:
+                if action_type in ["key_press", "key_release"]:
+                    all_keys.add(action_data)
+            
+            # Release all keys at start to ensure clean state
+            print("🔓 Ensuring all keys are released before starting...")
+            for key in all_keys:
+                try:
+                    pydirectinput.keyUp(key)
+                except:
+                    pass
+            time.sleep(0.1)
+            
             while True:
                 print("▶️ Playing attack sequence...")
                 
+                # Track currently held keys/buttons to release them between loops
+                held_keys = set()
+                
                 # Play the recorded sequence
                 last_timestamp = 0.0
+                currently_held_keys = set()  # Track which keys are currently held down
+                
                 for timestamp, action_type, action_data in actions:
                     if self.stop_requested:
                         break
@@ -267,11 +297,51 @@ class ActionPlayer:
                     # Calculate delay
                     delay = timestamp - last_timestamp
                     if delay > 0:
-                        time.sleep(delay)
+                        print(f"  ⏱️ Waiting {delay:.2f}s (timestamp: {timestamp:.2f}s)")
+                        
+                        # For long holds (>1s), refresh the key periodically so game doesn't auto-release
+                        if delay > 1.0 and currently_held_keys:
+                            elapsed = 0.0
+                            refresh_interval = 0.5  # Refresh every 500ms
+                            while elapsed < delay:
+                                if self.stop_requested:
+                                    break
+                                sleep_time = min(refresh_interval, delay - elapsed)
+                                time.sleep(sleep_time)
+                                elapsed += sleep_time
+                                
+                                # Refresh held keys by re-pressing them
+                                if elapsed < delay:  # Don't refresh on the last iteration
+                                    for held_key in currently_held_keys:
+                                        pydirectinput.keyDown(held_key)
+                        else:
+                            time.sleep(delay)
                     
-                    # Execute action
-                    self._execute_action(action_type, action_data)
+                    # Execute action and track held keys
+                    if action_type == "key_press":
+                        # Only press if not already held - this allows continuous holding
+                        if action_data not in currently_held_keys:
+                            self._execute_action(action_type, action_data)
+                            currently_held_keys.add(action_data)
+                            held_keys.add(action_data)
+                        # If already held, skip (key stays held)
+                    elif action_type == "key_release":
+                        # Release the key
+                        self._execute_action(action_type, action_data)
+                        currently_held_keys.discard(action_data)
+                        held_keys.discard(action_data)
+                    else:
+                        # Other actions (end_marker, etc.)
+                        self._execute_action(action_type, action_data)
+                    
                     last_timestamp = timestamp
+                
+                # IMPORTANT: Release any keys still held at end of sequence
+                if held_keys:
+                    print(f"🔓 Releasing {len(held_keys)} held keys before end delay: {held_keys}")
+                    for key in held_keys:
+                        self._press_key(key, False)
+                    time.sleep(0.1)
                 
                 if self.stop_requested or not loop:
                     break
@@ -325,10 +395,12 @@ class ActionPlayer:
         try:
             if action_type == "key_press":
                 key = action_data
+                print(f"  ▶️ Pressing key: {key}")
                 self._press_key(key, True)
             
             elif action_type == "key_release":
                 key = action_data
+                print(f"  ⏸️ Releasing key: {key}")
                 self._press_key(key, False)
             
             elif action_type == "end_marker":
@@ -367,8 +439,10 @@ class ActionPlayer:
             
             if press:
                 pydirectinput.keyDown(mapped_key)
+                time.sleep(0.05)  # 50ms delay after press to let game register it
             else:
                 pydirectinput.keyUp(mapped_key)
+                time.sleep(0.03)  # 30ms delay after release for clean state
                 
         except Exception as e:
             print(f"❌ Error with key/button {key}: {e}")

@@ -2331,13 +2331,9 @@ class SantaMacro:
                         elif self.attack_phase == "attacking":
                             # Custom attack is running - just keep tracking Santa
                             # The custom attack player handles everything: sequence -> E spam -> loop
-                            # Check if player has stopped (user abort or error)
-                            if not self.custom_attack_manager.player.playing:
-                                # Player finished (stopped by user or error)
-                                self.attack_phase = "idle"
-                                self._consecutive_detections = 0
-                                self.logger.info("[CUSTOM ATTACK] Player stopped - returning to idle")
-                            elif self._debug_log_counter % 50 == 0:
+                            # NEVER stop the attack sequence automatically - only F1 stops it
+                            # Even if Santa is lost, keep the attack running while searching
+                            if self._debug_log_counter % 50 == 0:
                                 self.logger.info("[ATTACKING] Custom attack sequence running, tracking Santa...")
                         
                         # No more LOAD/FIRE/COOLDOWN phases - custom attack handles everything

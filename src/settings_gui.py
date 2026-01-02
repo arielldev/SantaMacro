@@ -18,7 +18,9 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QLabel, QPushButton, QLineEdit, QTextEdit, QCheckBox,
     QGroupBox, QFormLayout, QMessageBox, QSpinBox, QDoubleSpinBox,
-    QDialog, QDialogButtonBox, QProgressBar, QSystemTrayIcon, QMenu
+    QDialog, QDialogButtonBox, QProgressBar, QSystemTrayIcon, QMenu,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QComboBox,
+    QScrollArea
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QFont, QKeySequence, QIcon, QPixmap, QAction
@@ -332,9 +334,6 @@ class RecordingConfirmDialog(QDialog):
 class SettingsGUI(QMainWindow):
     """Simple settings GUI for SantaMacro using PySide6"""
     
-    # Add a custom signal for F3 handling
-    f3_pressed_signal = Signal()
-    
     def __init__(self, config_path: str, macro_instance=None):
         # Ensure we're in the main thread
         from PySide6.QtWidgets import QApplication
@@ -348,17 +347,10 @@ class SettingsGUI(QMainWindow):
         self.config_path = config_path
         self.config = {}
         self.macro_instance = macro_instance  # Store reference to macro
-        self.recorder = FullActionRecorder()
-        self.recording_active = False
-        self.f3_monitoring_ready = False  # Prevent F3 handling during startup
-        
-        # Connect the F3 signal to the handler
-        self.f3_pressed_signal.connect(self.handle_f3_press)
         
         self.load_config()
         self.setup_ui()
         self.load_settings()
-        self.setup_global_hotkeys()
         self.setup_system_tray()
     
     def setup_system_tray(self):
@@ -380,11 +372,6 @@ class SettingsGUI(QMainWindow):
             self.show_action = QAction("📱 Show Settings", self)
             self.show_action.triggered.connect(self.show_settings)
             tray_menu.addAction(self.show_action)
-            
-            # Recording control action
-            self.record_action = QAction("🔴 Start Recording", self)
-            self.record_action.triggered.connect(self.toggle_recording_from_tray)
-            tray_menu.addAction(self.record_action)
             
             tray_menu.addSeparator()
             
@@ -417,314 +404,331 @@ class SettingsGUI(QMainWindow):
     
     def show_settings(self):
         """Show the settings window from tray"""
-        if self.recording_active:
-            # If recording is active, stop it first
-            actions = self.recorder.stop_recording()
-            self.recording_active = False
-            self.update_tray_menu()
-            
-            # Reset window title
-            self.setWindowTitle("SantaMacro Settings")
-            
-            # Process the recorded actions
-            if actions:
-                self.config["recorded_actions"] = actions
-                self.update_sequence_display(actions)
-                
-                # Show brief success message
-                if self.tray_icon:
-                    self.tray_icon.showMessage("SantaMacro", "Recording saved successfully!", QSystemTrayIcon.Information, 2000)
-            else:
-                self.sequence_display.setPlainText("No actions recorded.")
-        
-        # Show the window
         self.show()
         self.raise_()
         self.activateWindow()
-    
-    def toggle_recording_from_tray(self):
-        """Toggle recording from system tray - seamless workflow WITHOUT hiding"""
-        if not self.recording_active:
-            # Start recording immediately (no dialog from tray)
-            self.recording_active = True
-            self.recorder.start_recording()
-            self.sequence_display.setPlainText("🔴 Recording in progress... Press F3 or right-click tray to stop.")
-            self.update_tray_menu()
-            
-            # DON'T HIDE WINDOW - Keep it visible so F3 works
-            self.setWindowTitle("SantaMacro Settings - 🔴 RECORDING")
-            
-            # Show tray notification
-            if self.tray_icon:
-                self.tray_icon.showMessage("SantaMacro", "Recording started! Press F3 or right-click tray to stop.", QSystemTrayIcon.Information, 3000)
-        else:
-            # Stop recording
-            actions = self.recorder.stop_recording()
-            self.recording_active = False
-            self.update_tray_menu()
-            
-            # Reset window title
-            self.setWindowTitle("SantaMacro Settings")
-            
-            # Process the recorded actions
-            if actions:
-                # Save the sequence automatically
-                self.config["recorded_actions"] = actions
-                self.update_sequence_display(actions)
-                
-                # Show brief success message
-                if self.tray_icon:
-                    self.tray_icon.showMessage("SantaMacro", "Recording saved successfully!", QSystemTrayIcon.Information, 2000)
-            else:
-                self.sequence_display.setPlainText("No actions recorded.")
-    
-    def update_tray_menu(self):
-        """Update tray menu based on recording state"""
-        if hasattr(self, 'record_action'):
-            if self.recording_active:
-                self.record_action.setText("⏹️ Stop Recording")
-                self.show_action.setText("⏹️ Stop Recording & Show Settings")
-            else:
-                self.record_action.setText("🔴 Start Recording")
-                self.show_action.setText("📱 Show Settings")
-    
-    def setup_global_hotkeys(self):
-        """Setup WORKING global F3 hotkey using Qt signals"""
-        try:
-            # Reset the monitoring ready flag
-            self.f3_monitoring_ready = False
-            
-            import threading
-            import time
-            import ctypes
-            from ctypes import wintypes
-            
-            def check_f3_global():
-                """WORKING F3 detection using Qt signals"""
-                user32 = ctypes.windll.user32
-                f3_was_pressed = False
-                
-                print("🌍 WORKING Global F3 monitoring started!")
-                
-                # Clear any lingering key state first
-                user32.GetAsyncKeyState(0x72)  # Clear F3 state
-                time.sleep(0.1)  # Brief pause to clear state
-                
-                # Set monitoring as ready immediately
-                self.f3_monitoring_ready = True
-                print("✅ F3 monitoring is now ready!")
-                
-                while hasattr(self, '_f3_thread_running') and self._f3_thread_running:
-                    try:
-                        # Check if F3 is pressed (VK_F3 = 0x72)
-                        f3_is_pressed = bool(user32.GetAsyncKeyState(0x72) & 0x8000)
-                        
-                        # Only trigger on actual key press (transition from not pressed to pressed)
-                        if f3_is_pressed and not f3_was_pressed and self.f3_monitoring_ready:
-                            print("🔥 F3 DETECTED - EMITTING SIGNAL!")
-                            
-                            # Emit signal to trigger handler in main thread
-                            try:
-                                self.f3_pressed_signal.emit()
-                                print("✅ Signal emitted successfully")
-                            except Exception as e:
-                                print(f"❌ Failed to emit signal: {e}")
-                            
-                            # Wait for key release to prevent multiple triggers
-                            while user32.GetAsyncKeyState(0x72) & 0x8000:
-                                time.sleep(0.05)
-                            
-                            # Brief debounce
-                            time.sleep(0.2)
-                        
-                        f3_was_pressed = f3_is_pressed
-                        time.sleep(0.05)  # Check every 50ms
-                        
-                    except Exception as e:
-                        print(f"❌ F3 polling error: {e}")
-                        time.sleep(0.1)
-                
-                print("🛑 Global F3 monitoring stopped")
-            
-            # Start the global F3 monitoring thread
-            self._f3_thread_running = True
-            self.f3_thread = threading.Thread(target=check_f3_global, daemon=True)
-            self.f3_thread.start()
-            print("✅ WORKING GLOBAL F3 hotkey setup with Qt signals!")
-            
-        except Exception as e:
-            print(f"❌ Failed to setup global F3 hotkey: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    def handle_f3_press(self):
-        """Handle F3 key press - WORKING workflow with debug"""
-        print("🚀 HANDLE_F3_PRESS CALLED!")
-        
-        # PREVENT F3 HANDLING DURING STARTUP
-        if not self.f3_monitoring_ready:
-            print("❌ F3 ignored - monitoring not ready yet")
-            return
-            
-        try:
-            print(f"🔥 F3 HANDLER EXECUTING! Recording active: {self.recording_active}")
-            
-            if not self.recording_active:
-                print("📱 Starting recording workflow...")
-                
-                # FIRST: Make sure settings window is visible and active
-                print("📱 Showing settings window...")
-                self.show()
-                self.raise_()
-                self.activateWindow()
-                self.setWindowState(self.windowState() & ~Qt.WindowMinimized | Qt.WindowActive)
-                
-                # SECOND: Show dialog asking to start recording
-                print("📱 Creating dialog...")
-                dialog = RecordingConfirmDialog(self, is_start=True)
-                dialog.show()
-                dialog.raise_()
-                dialog.activateWindow()
-                
-                print("📱 Executing dialog...")
-                result = dialog.exec()
-                print(f"Dialog result: {result}")
-                
-                if result == QDialog.Accepted:
-                    print("✅ User confirmed - Starting recording")
-                    # Start recording and MINIMIZE EVERYTHING
-                    self.recording_active = True
-                    self.recorder.start_recording()
-                    self.sequence_display.setPlainText("🔴 Recording in progress... Press F3 again to stop.")
-                    self.update_tray_menu()
-                    
-                    # MINIMIZE THE WINDOW SO YOU CAN RECORD
-                    print("📱 Minimizing window...")
-                    self.showMinimized()
-                    self.hide()  # Hide from taskbar
-                    
-                    # Show tray notification
-                    if self.tray_icon:
-                        self.tray_icon.showMessage("SantaMacro", "🔴 Recording started! Press F3 again to stop.", QSystemTrayIcon.Information, 3000)
-                    
-                    print("✅ Recording started - Window minimized")
-                else:
-                    print("❌ User cancelled recording")
-            else:
-                # Stop recording and FORCE WINDOW TO APPEAR ON SCREEN
-                print("🛑 Stopping recording...")
-                actions = self.recorder.stop_recording()
-                self.recording_active = False
-                self.update_tray_menu()
-                
-                # FORCE WINDOW TO APPEAR ON SCREEN (NOT JUST TASKBAR)
-                print("📱 Forcing window to appear on screen...")
-                self.setWindowState(Qt.WindowNoState)  # Clear minimized state
-                self.showNormal()  # Show in normal state (not minimized)
-                self.raise_()  # Bring to front
-                self.activateWindow()  # Give focus
-                
-                # Force to front of all windows
-                self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
-                self.show()
-                self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
-                self.show()
-                
-                self.setWindowTitle("SantaMacro Settings")
-                
-                # Process the recorded actions
-                if actions:
-                    # Save the sequence automatically (no dialog)
-                    self.config["recorded_actions"] = actions
-                    self.update_sequence_display(actions)
-                    
-                    # Show brief success message
-                    if self.tray_icon:
-                        self.tray_icon.showMessage("SantaMacro", "✅ Recording saved!", QSystemTrayIcon.Information, 2000)
-                    
-                    print(f"✅ Recording stopped - {len(actions)} actions saved - Window forced to screen")
-                else:
-                    self.sequence_display.setPlainText("No actions recorded.")
-                    print("⚠️ No actions recorded - Window forced to screen")
-                    
-        except Exception as e:
-            print(f"❌ Error handling F3: {e}")
-            import traceback
-            traceback.print_exc()
     
     def closeEvent(self, event):
         """Handle window close event"""
-        try:
-            # Stop the global F3 monitoring thread
-            if hasattr(self, '_f3_thread_running'):
-                self._f3_thread_running = False
-                if hasattr(self, 'f3_thread'):
-                    self.f3_thread.join(timeout=1.0)  # Wait up to 1 second
-                    
-            if hasattr(self, 'global_listener') and self.global_listener:
-                self.global_listener.stop()
-                self.global_listener = None
-        except Exception as e:
-            print(f"Error stopping keyboard listener: {e}")
-        
-        if self.recording_active:
-            try:
-                self.recorder.stop_recording()
-            except Exception as e:
-                print(f"Error stopping recorder: {e}")
-        
         super().closeEvent(event)
     
-    def start_recording_with_dialog(self):
-        """Show dialog and start recording"""
-        dialog = RecordingConfirmDialog(self, is_start=True)
-        if dialog.exec() == QDialog.Accepted:
-            self.recording_active = True
-            self.recorder.start_recording()
-            self.sequence_display.setPlainText("🔴 Recording in progress... Right-click tray icon to stop recording.")
-            self.update_tray_menu()
-            
-            # Minimize to tray when recording starts
-            self.showMinimized()
-            self.hide()  # Hide from taskbar completely
-            
-            # Show tray notification
-            if self.tray_icon:
-                self.tray_icon.showMessage("SantaMacro", "Recording started! Right-click tray icon to stop.", QSystemTrayIcon.Information, 3000)
+    def add_action_row(self):
+        """Add a new action row to the table"""
+        row = self.sequence_table.rowCount()
+        self.sequence_table.insertRow(row)
+        
+        # Set row height to prevent overlapping
+        self.sequence_table.setRowHeight(row, 35)
+        
+        # Row number (non-editable)
+        num_item = QTableWidgetItem(str(row + 1))
+        num_item.setFlags(num_item.flags() & ~Qt.ItemIsEditable)
+        self.sequence_table.setItem(row, 0, num_item)
+        
+        # Key input (with key capture)
+        key_item = QLineEdit()
+        key_item.setPlaceholderText("Click and press a key...")
+        key_item.setStyleSheet("padding: 6px 4px; min-height: 20px; font-size: 12px;")
+        key_item.setReadOnly(True)  # Make read-only to prevent typing
+        key_item.mousePressEvent = lambda event: self.start_key_capture(key_item)
+        self.sequence_table.setCellWidget(row, 1, key_item)
+        
+        # Type dropdown (Instant or Hold)
+        type_combo = QComboBox()
+        type_combo.addItems(["Instant", "Hold"])
+        type_combo.setStyleSheet("""
+            QComboBox {
+                padding: 4px 8px;
+                background-color: white;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+            }
+            QComboBox:hover {
+                border-color: #80bdff;
+                background-color: #f8f9fa;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid #495057;
+                margin-right: 5px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: white;
+                border: 1px solid #ced4da;
+                selection-background-color: #007bff;
+                selection-color: white;
+                outline: none;
+            }
+            QComboBox QAbstractItemView::item {
+                padding: 6px 12px;
+                background-color: white;
+                color: #212529;
+                min-height: 25px;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background-color: #e9ecef;
+                color: #212529;
+            }
+            QComboBox QAbstractItemView::item:selected {
+                background-color: #007bff;
+                color: white;
+            }
+        """)
+        type_combo.currentTextChanged.connect(lambda text, r=row: self.on_type_changed(r, text))
+        self.sequence_table.setCellWidget(row, 2, type_combo)
+        
+        # Duration input (only for Hold type)
+        duration_input = QDoubleSpinBox()
+        duration_input.setRange(0.2, 60.0)
+        duration_input.setSingleStep(0.5)
+        duration_input.setValue(0.35)  # Start at 0.35s for Instant
+        duration_input.setSuffix(" s")
+        duration_input.setEnabled(False)  # Disabled by default (Instant selected)
+        duration_input.setStyleSheet("padding: 2px;")
+        duration_input.setSpecialValueText("")  # Clear special text initially
+        self.sequence_table.setCellWidget(row, 3, duration_input)
+        
+        # Scroll to the newly added row
+        self.sequence_table.scrollToBottom()
     
-    def stop_recording_with_dialog(self):
-        """Stop recording and show completion dialog"""
-        actions = self.recorder.stop_recording()
-        self.recording_active = False
-        self.update_tray_menu()
-        
-        # Show the window again when recording stops
-        self.show()
-        self.raise_()
-        self.activateWindow()
-        
-        if actions:
-            dialog = RecordingConfirmDialog(self, is_start=False)
-            if dialog.exec() == QDialog.Accepted:
-                # Save the sequence
-                self.config["recorded_actions"] = actions
-                self.update_sequence_display(actions)
+    def on_type_changed(self, row, type_text):
+        """Handle type combo box changes"""
+        duration_widget = self.sequence_table.cellWidget(row, 3)
+        if duration_widget:
+            if type_text == "Instant":
+                # Set to 0.35s and disable
+                duration_widget.setValue(0.35)
+                duration_widget.setEnabled(False)
             else:
-                # Discard the sequence
-                self.sequence_display.setPlainText("Recording discarded.")
-        else:
-            self.sequence_display.setPlainText("No actions recorded.")
+                # Enable for Hold type and prompt user to set duration
+                duration_widget.setValue(1.0)  # Reset to 1 second default
+                duration_widget.setEnabled(True)
+                duration_widget.setFocus()  # Focus on duration field
+                duration_widget.selectAll()  # Select all so user can type immediately
+    
+    def start_key_capture(self, line_edit):
+        """Start capturing a key press"""
+        line_edit.setText("Press any key...")
+        line_edit.setStyleSheet("padding: 4px; background-color: #fffacd; font-weight: bold;")
+        
+        # Store the line_edit so we can update it in the key event
+        self._capturing_key_for = line_edit
+        
+        # Install event filter to capture next key press
+        self.installEventFilter(self)
+    
+    def eventFilter(self, obj, event):
+        """Filter events to capture key presses"""
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QKeyEvent
+        
+        if hasattr(self, '_capturing_key_for') and event.type() == QEvent.KeyPress:
+            key_event = event
+            key = key_event.key()
+            
+            # Map Qt key codes to readable key names
+            key_name = self.qt_key_to_string(key)
+            
+            if key_name:
+                self._capturing_key_for.setText(key_name)
+                self._capturing_key_for.setStyleSheet("padding: 4px;")
+                delattr(self, '_capturing_key_for')
+                self.removeEventFilter(self)
+                return True
+        
+        return super().eventFilter(obj, event)
+    
+    def qt_key_to_string(self, qt_key):
+        """Convert Qt key code to string representation"""
+        from PySide6.QtCore import Qt
+        
+        # Function keys
+        if Qt.Key_F1 <= qt_key <= Qt.Key_F12:
+            return f"f{qt_key - Qt.Key_F1 + 1}"
+        
+        # Number keys
+        if Qt.Key_0 <= qt_key <= Qt.Key_9:
+            return chr(qt_key)
+        
+        # Letter keys
+        if Qt.Key_A <= qt_key <= Qt.Key_Z:
+            return chr(qt_key).lower()
+        
+        # Special keys mapping
+        special_keys = {
+            Qt.Key_Space: "space",
+            Qt.Key_Return: "enter",
+            Qt.Key_Enter: "enter",
+            Qt.Key_Tab: "tab",
+            Qt.Key_Backspace: "backspace",
+            Qt.Key_Escape: "esc",
+            Qt.Key_Shift: "shift",
+            Qt.Key_Control: "ctrl",
+            Qt.Key_Alt: "alt",
+            Qt.Key_CapsLock: "capslock",
+            Qt.Key_Left: "left",
+            Qt.Key_Right: "right",
+            Qt.Key_Up: "up",
+            Qt.Key_Down: "down",
+        }
+        
+        return special_keys.get(qt_key, None)
     
     def update_sequence_display(self, actions):
-        """Update the sequence display with recorded actions"""
-        display_text = "✅ Recorded Attack Sequence:\n\n"
-        for i, (timestamp, action_type, action_data) in enumerate(actions):
-            display_text += f"{i+1}. {timestamp:.3f}s - {action_type}"
-            if action_data and action_data != "None":
-                display_text += f" ({action_data})"
-            display_text += "\n"
+        """Update the sequence table from loaded actions (convert from old format)"""
+        self.sequence_table.setRowCount(0)  # Clear existing rows
         
-        self.sequence_display.setPlainText(display_text)
+        if not actions:
+            return
+        
+        # Group actions by key press/release pairs
+        i = 0
+        while i < len(actions):
+            timestamp, action_type, action_data = actions[i]
+            
+            if action_type == "key_press":
+                key = action_data
+                
+                # Look for matching key_release
+                release_time = None
+                for j in range(i + 1, len(actions)):
+                    if actions[j][1] == "key_release" and actions[j][2] == key:
+                        release_time = actions[j][0]
+                        break
+                
+                # Calculate duration
+                if release_time is not None:
+                    duration = release_time - timestamp
+                    
+                    # Add row
+                    row = self.sequence_table.rowCount()
+                    self.sequence_table.insertRow(row)
+                    
+                    # Set row height to prevent overlapping
+                    self.sequence_table.setRowHeight(row, 35)
+                    
+                    # Row number
+                    num_item = QTableWidgetItem(str(row + 1))
+                    num_item.setFlags(num_item.flags() & ~Qt.ItemIsEditable)
+                    self.sequence_table.setItem(row, 0, num_item)
+                    
+                    # Key
+                    key_item = QLineEdit()
+                    key_item.setText(str(key))
+                    key_item.setStyleSheet("padding: 6px 4px; min-height: 20px; font-size: 12px;")
+                    key_item.setReadOnly(True)  # Make read-only to prevent typing
+                    key_item.mousePressEvent = lambda event, ki=key_item: self.start_key_capture(ki)
+                    self.sequence_table.setCellWidget(row, 1, key_item)
+                    
+                    # Type (Instant if <= 0.4s, Hold otherwise - threshold slightly above 0.35s)
+                    type_combo = QComboBox()
+                    type_combo.addItems(["Instant", "Hold"])
+                    is_instant = duration <= 0.4  # Use 0.4s threshold to catch 0.35s instant actions
+                    type_combo.setCurrentText("Instant" if is_instant else "Hold")
+                    type_combo.setStyleSheet("""
+                        QComboBox {
+                            padding: 4px 8px;
+                            background-color: white;
+                            border: 1px solid #ced4da;
+                            border-radius: 4px;
+                        }
+                        QComboBox:hover {
+                            border-color: #80bdff;
+                            background-color: #f8f9fa;
+                        }
+                        QComboBox::drop-down {
+                            border: none;
+                            width: 20px;
+                        }
+                        QComboBox::down-arrow {
+                            image: none;
+                            border-left: 4px solid transparent;
+                            border-right: 4px solid transparent;
+                            border-top: 5px solid #495057;
+                            margin-right: 5px;
+                        }
+                        QComboBox QAbstractItemView {
+                            background-color: white;
+                            border: 1px solid #ced4da;
+                            selection-background-color: #007bff;
+                            selection-color: white;
+                            outline: none;
+                        }
+                        QComboBox QAbstractItemView::item {
+                            padding: 6px 12px;
+                            background-color: white;
+                            color: #212529;
+                            min-height: 25px;
+                        }
+                        QComboBox QAbstractItemView::item:hover {
+                            background-color: #e9ecef;
+                            color: #212529;
+                        }
+                        QComboBox QAbstractItemView::item:selected {
+                            background-color: #007bff;
+                            color: white;
+                        }
+                    """)
+                    type_combo.currentTextChanged.connect(lambda text, r=row: self.on_type_changed(r, text))
+                    self.sequence_table.setCellWidget(row, 2, type_combo)
+                    
+                    # Duration
+                    duration_input = QDoubleSpinBox()
+                    duration_input.setRange(0.2, 60.0)
+                    duration_input.setSingleStep(0.5)
+                    duration_input.setValue(max(0.2, duration))
+                    duration_input.setSuffix(" s")
+                    duration_input.setEnabled(not is_instant)
+                    duration_input.setStyleSheet("padding: 2px;")
+                    self.sequence_table.setCellWidget(row, 3, duration_input)
+            
+            i += 1
+    
+    def clear_sequence_display(self):
+        """Clear the sequence display (helper for compatibility)"""
+        self.sequence_table.setRowCount(0)
+
+    
+    def delete_selected_rows(self):
+        """Delete selected rows from the sequence"""
+        selected_rows = set(item.row() for item in self.sequence_table.selectedItems())
+        
+        if not selected_rows:
+            QMessageBox.information(self, "No Selection", "Please select rows to delete by clicking on the row number(s).")
+            return
+        
+        # Get row numbers for display
+        row_numbers = sorted([r + 1 for r in selected_rows])
+        
+        # Create readable list of row numbers
+        if len(row_numbers) == 1:
+            row_text = f"row #{row_numbers[0]}"
+        elif len(row_numbers) == 2:
+            row_text = f"rows #{row_numbers[0]} and #{row_numbers[1]}"
+        else:
+            row_text = f"rows #{', #'.join(map(str, row_numbers[:-1]))} and #{row_numbers[-1]}"
+        
+        # Confirm deletion
+        reply = QMessageBox.question(self, "Confirm Delete", 
+                                    f"Are you sure you want to delete {row_text}?",
+                                    QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            # Remove rows in reverse order to maintain indices
+            for row in sorted(selected_rows, reverse=True):
+                self.sequence_table.removeRow(row)
+            
+            # Renumber remaining rows
+            for row in range(self.sequence_table.rowCount()):
+                num_item = self.sequence_table.item(row, 0)
+                if num_item:
+                    num_item.setText(str(row + 1))
     
     def load_config(self):
         """Load configuration from file"""
@@ -761,7 +765,7 @@ class SettingsGUI(QMainWindow):
     def setup_ui(self):
         """Setup the user interface"""
         self.setWindowTitle("SantaMacro Settings")
-        self.setGeometry(100, 100, 550, 600)
+        self.setGeometry(100, 100, 550, 500)  # Reduced height from 600 to 500
         
         # Modern minimal Christmas theme
         self.setStyleSheet("""
@@ -892,19 +896,60 @@ class SettingsGUI(QMainWindow):
             }
         """)
         
-        # Central widget
+        # Central widget with scroll area
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
-        layout.setSpacing(15)
-        layout.setContentsMargins(25, 25, 25, 25)
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Title
+        # Title (outside scroll area)
         title = QLabel("🎄 SantaMacro Settings")
         title.setFont(QFont("Arial", 20, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color: #dc3545; margin: 0 0 15px 0; padding: 0;")
-        layout.addWidget(title)
+        title.setStyleSheet("color: #dc3545; margin: 15px 0 10px 0; padding: 0;")
+        main_layout.addWidget(title)
+        
+        # Scroll area for content
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        # Simple (default) scrolling behavior
+        vbar = scroll.verticalScrollBar()
+        vbar.setSingleStep(20)
+        vbar.setPageStep(200)
+        scroll.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: #ffffff;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background-color: #f8f9fa;
+                width: 10px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #dc3545;
+                border-radius: 5px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #c82333;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
+        
+        # Content widget inside scroll
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
+        layout.setSpacing(15)
+        layout.setContentsMargins(25, 10, 25, 25)
         
         # Tab widget
         self.tabs = QTabWidget()
@@ -930,6 +975,10 @@ class SettingsGUI(QMainWindow):
         button_layout.addWidget(save_btn)
         
         layout.addLayout(button_layout)
+        
+        # Set content widget to scroll area
+        scroll.setWidget(content_widget)
+        main_layout.addWidget(scroll)
     
     def create_attack_tab(self):
         """Create the attack configuration tab"""
@@ -971,15 +1020,16 @@ class SettingsGUI(QMainWindow):
         
         attack_layout.addLayout(delay_layout)
         
-        # Recording instructions
+        # Manual action builder instructions
         instructions_layout = QVBoxLayout()
-        instructions_layout.addWidget(QLabel("📝 Recording Instructions"))
+        instructions_layout.addWidget(QLabel("⚙️ Action Builder Instructions"))
         
-        instructions = QLabel("""1. Set your End Delay above
-2. Press F3 to start recording
-3. Perform your attack sequence
-4. Press F3 again to stop and save
+        instructions = QLabel("""Build your custom attack sequence by adding actions:
 
+• Instant: Key pressed and released in 200ms (for quick taps)
+• Hold: Key held down for specified duration (e.g., X for 12 seconds)
+
+Click "Add Action" to add rows, then configure each action.
 Your sequence will play during attacks, then macro presses 3 and spams E during End Delay.""")
         instructions.setWordWrap(True)
         instructions.setStyleSheet("color: #495057; font-size: 12px; line-height: 1.4; font-weight: 400; margin: 8px 0;")
@@ -989,48 +1039,109 @@ Your sequence will play during attacks, then macro presses 3 and spams E during 
         
         # Sequence display
         display_layout = QVBoxLayout()
-        display_layout.addWidget(QLabel("📊 Recorded Sequence"))
+        display_layout.addWidget(QLabel("📊 Recorded Sequence (Editable)"))
         
-        self.sequence_display = QTextEdit()
-        self.sequence_display.setMaximumHeight(150)
-        self.sequence_display.setPlaceholderText("Your recorded attack sequence will appear here...\n\nPress F3 while this window is open to start recording!")
-        self.sequence_display.setStyleSheet("font-family: 'Consolas', 'Monaco', monospace; font-size: 11px; font-weight: 400;")
-        display_layout.addWidget(self.sequence_display)
+        # Create table for sequence editing
+        self.sequence_table = QTableWidget()
+        self.sequence_table.setColumnCount(4)
+        self.sequence_table.setHorizontalHeaderLabels(["#", "Key", "Type", "Duration (s)"])
+        self.sequence_table.setMaximumHeight(300)
+        self.sequence_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.sequence_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)  # Use custom editors
         
-        # Recording button and clear button
+        # Configure column behavior
+        header = self.sequence_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)  # # column fixed
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)  # Key column stretches
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)  # Type column fixed
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)  # Duration column fixed
+        
+        self.sequence_table.setColumnWidth(0, 40)   # # column
+        self.sequence_table.setColumnWidth(2, 100)  # Type column
+        self.sequence_table.setColumnWidth(3, 120)  # Duration column
+        
+        self.sequence_table.setStyleSheet("""
+            QTableWidget {
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 11px;
+                gridline-color: #dee2e6;
+            }
+            QTableWidget::item {
+                padding: 4px;
+            }
+            QTableWidget::item:selected {
+                background-color: #cfe2ff;
+                color: #052c65;
+            }
+            QHeaderView::section {
+                background-color: #f8f9fa;
+                padding: 8px;
+                border: 1px solid #dee2e6;
+                font-weight: 600;
+            }
+        """)
+        
+        display_layout.addWidget(self.sequence_table)
+        
+        # Action buttons
         button_layout = QHBoxLayout()
         
-        # Replace button with text instruction
-        f3_instruction = QLabel("Press F3 to start recording")
-        f3_instruction.setStyleSheet("""
-            color: #dc3545; 
-            font-weight: 600; 
-            font-size: 14px; 
-            padding: 10px; 
-            background-color: #f8f9fa; 
-            border: 1px solid #dee2e6; 
-            border-radius: 4px;
+        # Add action button
+        add_action_btn = QPushButton("➕ Add Action")
+        add_action_btn.setToolTip("Add a new action to your sequence")
+        add_action_btn.clicked.connect(self.add_action_row)
+        add_action_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-size: 13px;
+                font-weight: 600;
+                padding: 10px 20px;
+            }
+            QPushButton:hover {
+                background-color: #218838;
+            }
         """)
-        f3_instruction.setAlignment(Qt.AlignCenter)
-        button_layout.addWidget(f3_instruction)
+        button_layout.addWidget(add_action_btn)
         
-        # Clear button as simple icon
-        clear_btn = QPushButton("🗑️")
-        clear_btn.setToolTip("Clear recorded sequence")
-        clear_btn.clicked.connect(self.clear_sequence)
-        clear_btn.setMaximumWidth(40)
-        clear_btn.setMaximumHeight(40)
-        clear_btn.setStyleSheet("""
+        # Delete selected row button
+        delete_row_btn = QPushButton("🗑️ Delete Selected")
+        delete_row_btn.setToolTip("Delete selected rows from sequence")
+        delete_row_btn.clicked.connect(self.delete_selected_rows)
+        delete_row_btn.setMaximumWidth(140)
+        delete_row_btn.setStyleSheet("""
             QPushButton {
                 background-color: #6c757d;
                 color: white;
                 border: none;
                 border-radius: 4px;
-                font-size: 16px;
+                font-size: 12px;
                 padding: 8px;
             }
             QPushButton:hover {
                 background-color: #5a6268;
+            }
+        """)
+        button_layout.addWidget(delete_row_btn)
+        
+        # Clear button as simple icon
+        clear_btn = QPushButton("🗑️ Clear All")
+        clear_btn.setToolTip("Clear entire recorded sequence")
+        clear_btn.clicked.connect(self.clear_sequence)
+        clear_btn.setMaximumWidth(110)
+        clear_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dc3545;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-size: 12px;
+                padding: 8px;
+            }
+            QPushButton:hover {
+                background-color: #c82333;
             }
         """)
         button_layout.addWidget(clear_btn)
@@ -1102,7 +1213,7 @@ Your sequence will play during attacks, then macro presses 3 and spams E during 
         
         instructions = QLabel("""How to setup Discord Webhooks:
 
-1. Go to your Discord server settings
+1. Go to your Discord channel settings
 2. Navigate to Integrations → Webhooks  
 3. Create a new webhook
 4. Copy the webhook URL and paste it above
@@ -1278,49 +1389,16 @@ The update process creates a backup of your current installation before applying
             QMessageBox.information(self, "Repository", 
                                   "GitHub Repository:\nhttps://github.com/arielldev/SantaMacro")
     
-    def toggle_recording(self):
-        """Toggle recording state with button - seamless workflow WITHOUT hiding"""
-        if not self.recording_active:
-            # Show dialog asking to start recording
-            dialog = RecordingConfirmDialog(self, is_start=True)
-            if dialog.exec() == QDialog.Accepted:
-                # Start recording but KEEP WINDOW VISIBLE
-                self.recording_active = True
-                self.recorder.start_recording()
-                self.sequence_display.setPlainText("🔴 Recording in progress... Press F3 or click Stop to finish.")
-                self.update_tray_menu()
-                
-                # DON'T MINIMIZE - Keep window visible so F3 still works
-                self.setWindowTitle("SantaMacro Settings - 🔴 RECORDING")
-                
-                # Show tray notification
-                if self.tray_icon:
-                    self.tray_icon.showMessage("SantaMacro", "Recording started! Press F3 or click Stop to finish.", QSystemTrayIcon.Information, 3000)
-        else:
-            # Stop recording
-            actions = self.recorder.stop_recording()
-            self.recording_active = False
-            self.update_tray_menu()
-            
-            # Reset window title
-            self.setWindowTitle("SantaMacro Settings")
-            
-            # Process recorded actions
-            if actions:
-                # Save automatically
-                self.config["recorded_actions"] = actions
-                self.update_sequence_display(actions)
-                
-                # Show success message
-                if self.tray_icon:
-                    self.tray_icon.showMessage("SantaMacro", "Recording saved successfully!", QSystemTrayIcon.Information, 2000)
-            else:
-                self.sequence_display.setPlainText("No actions recorded.")
-    
     def clear_sequence(self):
         """Clear the recorded sequence"""
-        self.config["recorded_actions"] = []
-        self.sequence_display.setPlainText("Sequence cleared. Press F3 to record a new sequence!")
+        reply = QMessageBox.question(self, "Confirm Clear", 
+                                    "Clear entire attack sequence?",
+                                    QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            self.config["recorded_actions"] = []
+            self.sequence_table.setRowCount(0)
+            QMessageBox.information(self, "Cleared", "Sequence cleared. Click 'Add Action' to build a new sequence!")
     
     def test_webhook(self):
         """Test the Discord webhook"""
@@ -1369,7 +1447,59 @@ The update process creates a backup of your current installation before applying
     
     def save_settings(self):
         """Save settings to config file"""
+        # Read actions from table and convert to action format
+        actions = []
+        current_time = 0.0
+        
+        for row in range(self.sequence_table.rowCount()):
+            try:
+                # Get widgets
+                key_widget = self.sequence_table.cellWidget(row, 1)
+                type_widget = self.sequence_table.cellWidget(row, 2)
+                duration_widget = self.sequence_table.cellWidget(row, 3)
+                
+                if not key_widget or not type_widget or not duration_widget:
+                    QMessageBox.warning(self, "Invalid Data", 
+                                      f"Row {row + 1} has missing data. Please complete all fields.")
+                    return
+                
+                key = key_widget.text().strip()
+                action_type = type_widget.currentText()
+                duration = duration_widget.value()
+                
+                if not key:
+                    QMessageBox.warning(self, "Invalid Data", 
+                                      f"Row {row + 1} has no key specified. Please enter a key.")
+                    return
+                
+                # Create press and release events
+                if action_type == "Instant":
+                    # Instant: press and release with duration from widget (default 0.35s)
+                    actions.append((current_time, "key_press", key))
+                    current_time += duration
+                    actions.append((current_time, "key_release", key))
+                    current_time += 0.05  # Add 50ms gap after each action for proper key registration
+                else:
+                    # Hold: press and release with specified duration
+                    actions.append((current_time, "key_press", key))
+                    current_time += duration
+                    actions.append((current_time, "key_release", key))
+                    current_time += 0.05  # Add 50ms gap after each action for proper key registration
+                
+            except (ValueError, AttributeError) as e:
+                QMessageBox.warning(self, "Invalid Data", 
+                                  f"Row {row + 1} has invalid data: {str(e)}")
+                return
+        
+        if not actions:
+            reply = QMessageBox.question(self, "Empty Sequence", 
+                                        "Your attack sequence is empty. Save anyway?",
+                                        QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.No:
+                return
+        
         # Update config with GUI values
+        self.config["recorded_actions"] = actions
         self.config["attack_settings"] = {
             "custom_sequence_enabled": True,  # Always enabled
             "sequence_name": self.sequence_name.text(),
@@ -1399,7 +1529,8 @@ The update process creates a backup of your current installation before applying
                     self.macro_instance.webhook_manager.update_config(updated_config)
                     print("✅ Webhook config reloaded in macro")
             
-            QMessageBox.information(self, "Success", "✅ Settings saved successfully!\n\nYour attack sequence is ready to use!")
+            QMessageBox.information(self, "Success", 
+                                  f"✅ Settings saved successfully!\\n\\n{len(actions)} action events in sequence.\\nYour attack sequence is ready to use!")
             self.close()
             
         except Exception as e:
