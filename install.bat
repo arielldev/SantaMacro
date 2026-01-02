@@ -147,7 +147,8 @@ if errorlevel 1 (
     echo ✓ Pillow installed
 )
 
-echo Installing pyautogui...
+echo Installing pyautogui and dependencies...
+python -m pip install pymsgbox pygetwindow pytweening pyscreeze mouseinfo --disable-pip-version-check --no-warn-script-location
 python -m pip install pyautogui==0.9.54 --disable-pip-version-check --no-warn-script-location
 if errorlevel 1 (
     echo ✗ pyautogui failed
@@ -158,21 +159,35 @@ if errorlevel 1 (
 )
 
 echo Installing pydirectinput...
-python -m pip install pydirectinput==1.0.4 --disable-pip-version-check --no-warn-script-location
+echo ^(Note: This package is Windows-only and requires proper dependencies^)
+python -m pip install pydirectinput==1.0.4 --no-deps --disable-pip-version-check --no-warn-script-location
 if errorlevel 1 (
-    echo ✗ pydirectinput failed
-    set FAILED_PACKAGES=!FAILED_PACKAGES! pydirectinput
-    set /a FAILED_COUNT+=1
+    echo ✗ pydirectinput failed - trying alternative installation...
+    python -m pip install pydirectinput --disable-pip-version-check --no-warn-script-location
+    if errorlevel 1 (
+        echo ✗ pydirectinput failed completely
+        set FAILED_PACKAGES=!FAILED_PACKAGES! pydirectinput
+        set /a FAILED_COUNT+=1
+    ) else (
+        echo ✓ pydirectinput installed ^(alternative method^)
+    )
 ) else (
     echo ✓ pydirectinput installed
 )
 
-echo Installing pynput...
+echo Installing pynput and dependencies...
+python -m pip install evdev six --disable-pip-version-check --no-warn-script-location 2>nul
 python -m pip install pynput==1.7.6 --disable-pip-version-check --no-warn-script-location
 if errorlevel 1 (
-    echo ✗ pynput failed
-    set FAILED_PACKAGES=!FAILED_PACKAGES! pynput
-    set /a FAILED_COUNT+=1
+    echo ✗ pynput failed - trying alternative installation...
+    python -m pip install pynput --disable-pip-version-check --no-warn-script-location
+    if errorlevel 1 (
+        echo ✗ pynput failed completely
+        set FAILED_PACKAGES=!FAILED_PACKAGES! pynput
+        set /a FAILED_COUNT+=1
+    ) else (
+        echo ✓ pynput installed ^(alternative method^)
+    )
 ) else (
     echo ✓ pynput installed
 )
@@ -235,80 +250,149 @@ set VERIFY_FAILED=0
 
 .venv\Scripts\python.exe -c "import mss; print(f'mss v{mss.__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ mss import failed - Package not properly installed in venv
-    set VERIFY_FAILED=1
+    echo ✗ mss import failed
+    echo    Attempting fix...
+    .venv\Scripts\python.exe -m pip install mss==9.0.1 --force-reinstall --no-cache-dir --disable-pip-version-check
+    .venv\Scripts\python.exe -c "import mss; print(f'   ✓ Fixed! mss v{mss.__version__}')" 2>nul
+    if errorlevel 1 (
+        echo    ✗ Still failing after reinstall
+        set VERIFY_FAILED=1
+    )
 ) else (
     echo ✓ mss working
 )
 
 .venv\Scripts\python.exe -c "import numpy; print(f'numpy v{numpy.__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ numpy import failed - Package not properly installed in venv
-    set VERIFY_FAILED=1
+    echo ✗ numpy import failed
+    echo    Attempting fix...
+    .venv\Scripts\python.exe -m pip install numpy==2.1.3 --force-reinstall --no-cache-dir --disable-pip-version-check
+    .venv\Scripts\python.exe -c "import numpy; print(f'   ✓ Fixed! numpy v{numpy.__version__}')" 2>nul
+    if errorlevel 1 (
+        echo    ✗ Still failing after reinstall
+        set VERIFY_FAILED=1
+    )
 ) else (
     echo ✓ numpy working
 )
 
 .venv\Scripts\python.exe -c "import cv2; print(f'opencv v{cv2.__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ opencv-python import failed - Package not properly installed in venv
-    set VERIFY_FAILED=1
+    echo ✗ opencv-python import failed
+    echo    Attempting fix...
+    .venv\Scripts\python.exe -m pip install opencv-python==4.10.0.84 --force-reinstall --no-cache-dir --disable-pip-version-check
+    .venv\Scripts\python.exe -c "import cv2; print(f'   ✓ Fixed! opencv v{cv2.__version__}')" 2>nul
+    if errorlevel 1 (
+        echo    ✗ Still failing after reinstall
+        set VERIFY_FAILED=1
+    )
 ) else (
     echo ✓ opencv-python working
 )
 
 .venv\Scripts\python.exe -c "import PIL; print(f'Pillow v{PIL.__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ Pillow import failed - Package not properly installed in venv
-    set VERIFY_FAILED=1
+    echo ✗ Pillow import failed
+    echo    Attempting fix...
+    .venv\Scripts\python.exe -m pip install Pillow==11.0.0 --force-reinstall --no-cache-dir --disable-pip-version-check
+    .venv\Scripts\python.exe -c "import PIL; print(f'   ✓ Fixed! Pillow v{PIL.__version__}')" 2>nul
+    if errorlevel 1 (
+        echo    ✗ Still failing after reinstall
+        set VERIFY_FAILED=1
+    )
 ) else (
     echo ✓ Pillow working
 )
 
 .venv\Scripts\python.exe -c "import pyautogui; print(f'pyautogui v{pyautogui.__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ pyautogui import failed - Package not properly installed in venv
-    set VERIFY_FAILED=1
+    echo ✗ pyautogui import failed
+    echo    Error details:
+    .venv\Scripts\python.exe -c "import pyautogui" 2>&1
+    echo.
+    echo    Attempting fix...
+    .venv\Scripts\python.exe -m pip install pyautogui --force-reinstall --no-cache-dir --disable-pip-version-check
+    .venv\Scripts\python.exe -c "import pyautogui; print(f'   ✓ Fixed! pyautogui v{pyautogui.__version__}')" 2>nul
+    if errorlevel 1 (
+        echo    ✗ Still failing after reinstall
+        set VERIFY_FAILED=1
+    )
 ) else (
     echo ✓ pyautogui working
 )
 
 .venv\Scripts\python.exe -c "import pydirectinput; print(f'pydirectinput v{pydirectinput.__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ pydirectinput import failed - Package not properly installed in venv
-    set VERIFY_FAILED=1
+    echo ✗ pydirectinput import failed
+    echo    Error details:
+    .venv\Scripts\python.exe -c "import pydirectinput" 2>&1
+    echo.
+    echo    Attempting fix...
+    .venv\Scripts\python.exe -m pip install pydirectinput --force-reinstall --no-cache-dir --disable-pip-version-check
+    .venv\Scripts\python.exe -c "import pydirectinput; print(f'   ✓ Fixed! pydirectinput v{pydirectinput.__version__}')" 2>nul
+    if errorlevel 1 (
+        echo    ✗ Still failing after reinstall
+        set VERIFY_FAILED=1
+    )
 ) else (
     echo ✓ pydirectinput working
 )
 
 .venv\Scripts\python.exe -c "import pynput; print(f'pynput v{pynput.__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ pynput import failed - Package not properly installed in venv
-    set VERIFY_FAILED=1
+    echo ✗ pynput import failed
+    echo    Error details:
+    .venv\Scripts\python.exe -c "import pynput" 2>&1
+    echo.
+    echo    Attempting fix...
+    .venv\Scripts\python.exe -m pip install pynput --force-reinstall --no-cache-dir --disable-pip-version-check
+    .venv\Scripts\python.exe -c "import pynput; print(f'   ✓ Fixed! pynput v{pynput.__version__}')" 2>nul
+    if errorlevel 1 (
+        echo    ✗ Still failing after reinstall
+        set VERIFY_FAILED=1
+    )
 ) else (
     echo ✓ pynput working
 )
 
 .venv\Scripts\python.exe -c "from PySide6 import __version__; print(f'PySide6 v{__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ PySide6 import failed - Package not properly installed in venv
-    set VERIFY_FAILED=1
+    echo ✗ PySide6 import failed
+    echo    Attempting fix...
+    .venv\Scripts\python.exe -m pip install "PySide6>=6.8.0" --force-reinstall --no-cache-dir --disable-pip-version-check
+    .venv\Scripts\python.exe -c "from PySide6 import __version__; print(f'   ✓ Fixed! PySide6 v{__version__}')" 2>nul
+    if errorlevel 1 (
+        echo    ✗ Still failing after reinstall
+        set VERIFY_FAILED=1
+    )
 ) else (
     echo ✓ PySide6 working
 )
 
 .venv\Scripts\python.exe -c "import requests; print(f'requests v{requests.__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ requests import failed - Package not properly installed in venv
-    set VERIFY_FAILED=1
+    echo ✗ requests import failed
+    echo    Attempting fix...
+    .venv\Scripts\python.exe -m pip install requests --force-reinstall --no-cache-dir --disable-pip-version-check
+    .venv\Scripts\python.exe -c "import requests; print(f'   ✓ Fixed! requests v{requests.__version__}')" 2>nul
+    if errorlevel 1 (
+        echo    ✗ Still failing after reinstall
+        set VERIFY_FAILED=1
+    )
 ) else (
     echo ✓ requests working
 )
 
 .venv\Scripts\python.exe -c "from ultralytics import __version__; print(f'ultralytics v{__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ ultralytics import failed - Package not properly installed in venv
-    set VERIFY_FAILED=1
+    echo ✗ ultralytics import failed
+    echo    Attempting fix...
+    .venv\Scripts\python.exe -m pip install ultralytics --force-reinstall --no-cache-dir --disable-pip-version-check
+    .venv\Scripts\python.exe -c "from ultralytics import __version__; print(f'   ✓ Fixed! ultralytics v{__version__}')" 2>nul
+    if errorlevel 1 (
+        echo    ✗ Still failing after reinstall
+        set VERIFY_FAILED=1
+    )
 ) else (
     echo ✓ ultralytics working
 )
@@ -319,19 +403,23 @@ if !VERIFY_FAILED! EQU 1 (
     echo   ⚠️ INSTALLATION INCOMPLETE!
     echo ========================================
     echo.
-    echo Some packages failed to install or import properly.
+    echo Some packages still failed after automatic fixes.
     echo SantaMacro will NOT work correctly!
     echo.
-    echo CRITICAL: Scroll up in this window to see the actual error messages!
+    echo CRITICAL: Look at the error messages above to see what failed.
     echo.
-    echo Common fixes:
-    echo 1. Delete the .venv folder and run install.bat again
-    echo 2. Run install.bat as Administrator ^(right-click ^> Run as administrator^)
-    echo 3. Make sure you're using Python 3.12 or 3.13 ^(not 3.14+^)
-    echo 4. Check your internet connection
-    echo 5. Try manually: .venv\Scripts\python.exe -m pip install -r requirements.txt
+    echo Common solutions:
+    echo 1. Delete .venv folder and run install.bat as Administrator
+    echo 2. Verify you're using Python 3.12 or 3.13 ^(not 3.14+^)
+    echo 3. Update pip: .venv\Scripts\python.exe -m pip install --upgrade pip
+    echo 4. Check antivirus isn't blocking package installation
+    echo 5. Try on a different network if corporate firewall is blocking
     echo.
-    echo If still failing, save this window output and ask for help in Discord!
+    echo Manual reinstall command for failed packages:
+    echo   .venv\Scripts\python.exe -m pip install [package] --force-reinstall --no-cache-dir
+    echo.
+    echo If you see DLL errors, you may need Visual C++ Redistributable:
+    echo   https://aka.ms/vs/17/release/vc_redist.x64.exe
     echo.
     pause
     exit /b 1
@@ -340,7 +428,8 @@ if !VERIFY_FAILED! EQU 1 (
     echo   ✓ ALL PACKAGES VERIFIED!
     echo ========================================
     echo.
-    echo All packages installed and working correctly in your virtual environment.
+    echo All packages installed and working correctly!
+    echo Any issues during install were automatically fixed.
 )
 
 echo.
