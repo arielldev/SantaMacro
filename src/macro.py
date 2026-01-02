@@ -86,7 +86,7 @@ class SantaMacro:
         self.ema_alpha: float = float(self.cfg["detection"].get("ema_alpha", 0.25))
         
         self._last_detection_frame = -1000
-        self._detection_grace_frames = 8
+        self._detection_grace_frames = 20  # Increased from 8 to 20 for long custom attack sequences
         self._predicted_position = None
         self._position_history = []
         self._max_position_history = 5
@@ -118,6 +118,15 @@ class SantaMacro:
         except Exception as e:
             self.logger.error(f"Failed to initialize custom attack manager: {e}")
             self.custom_attack_manager = None
+        
+        # Initialize webhook manager
+        try:
+            from webhook_manager import WebhookManager
+            self.webhook_manager = WebhookManager(self.cfg)
+            self.logger.info("Webhook manager initialized")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize webhook manager: {e}")
+            self.webhook_manager = None
         
         self._x_key_down = False
         self._smoothed_cursor_pos = None
@@ -1358,7 +1367,7 @@ class SantaMacro:
                     self._settings_window.close()
                 
                 # Create and store new settings window
-                self._settings_window = SettingsGUI(self.config_path)
+                self._settings_window = SettingsGUI(self.config_path, macro_instance=self)
                 self._settings_window.show()
                 print("Settings window created and shown")
             
@@ -1844,6 +1853,9 @@ class SantaMacro:
                     self._position_history.clear()
                     self._detection_movement_history.clear()
                     self.logger.info("Hotkey TOGGLE -> STOPPED (running=False)")
+                    # Webhook: Macro stopped
+                    if self.webhook_manager:
+                        self.webhook_manager.macro_stopped()
                 else:
                     if not self._zoom_performed:
                         self._perform_initial_zoom()
@@ -1852,6 +1864,9 @@ class SantaMacro:
                     self._paused = False
                     self.state = MacroState.DETECTING
                     self.logger.info("Hotkey TOGGLE -> STARTED (running=True)")
+                    # Webhook: Macro started
+                    if self.webhook_manager:
+                        self.webhook_manager.macro_started()
             elif name.lower() == hk.get("start", "").lower() and hk.get("start"):
                 if not self._running:
                     if not self._zoom_performed:
@@ -2183,6 +2198,9 @@ class SantaMacro:
                         
                         if self._debug_log_counter % 10 == 0:
                             self.logger.info(f"[SANTA DETECTED] Position: ({santa_cx}, {santa_cy}), size: {w}x{h}, conf: {best_santa['confidence']:.2f}")
+                            # Webhook: Santa detected (rate-limited in webhook manager)
+                            if self.webhook_manager and self._consecutive_detections == 1:
+                                self.webhook_manager.santa_detected(best_santa['confidence'], (santa_cx, santa_cy, w, h))
                         
                         target_x_roi = santa_cx
                         target_y_roi = santa_cy
@@ -2245,11 +2263,13 @@ class SantaMacro:
                         
                         
                         # Camera repositioning during attack (inspired by GPO Santa.py)
-                        # If Santa drifts too far left/right during FIRE, gently adjust camera to keep them centered
+                        # CRITICAL: For long custom attacks, aggressively track Santa to prevent loss
+                        # Must keep Santa in view even during 20+ second attack sequences
                         if self.attack_phase in ["load", "fire"]:
                             # Check if Santa is in the danger zone (too far left or right)
-                            reposition_threshold_left = int(self.roi["width"] * 0.20)  # Left 20%
-                            reposition_threshold_right = int(self.roi["width"] * 0.80)  # Right 80%
+                            # Use wider thresholds (10-90%) for more aggressive tracking during attacks
+                            reposition_threshold_left = int(self.roi["width"] * 0.10)  # Left 10% - very aggressive
+                            reposition_threshold_right = int(self.roi["width"] * 0.90)  # Right 90% - very aggressive
                             
                             with self.arrow_lock:
                                 if santa_cx < reposition_threshold_left:
@@ -2265,8 +2285,8 @@ class SantaMacro:
                                         self.current_arrow_key = 'left'
                                         self.is_holding_arrow = True
                                         self._camera_has_tracked = True  # Confirmed we're tracking Santa
-                                        if self._debug_log_counter % 10 == 0:
-                                            self.logger.info(f"[{self.attack_phase.upper()}] Santa at X={santa_cx} too far LEFT - repositioning camera")
+                                        if self._debug_log_counter % 5 == 0:  # More frequent logging
+                                            self.logger.info(f"[{self.attack_phase.upper()} TRACK] Santa at X={santa_cx} too far LEFT - repositioning camera")
                                 elif santa_cx > reposition_threshold_right:
                                     # Santa too far right - move camera RIGHT to recenter
                                     if self.current_arrow_key != 'right':
@@ -2280,8 +2300,8 @@ class SantaMacro:
                                         self.current_arrow_key = 'right'
                                         self.is_holding_arrow = True
                                         self._camera_has_tracked = True  # Confirmed we're tracking Santa
-                                        if self._debug_log_counter % 10 == 0:
-                                            self.logger.info(f"[{self.attack_phase.upper()}] Santa at X={santa_cx} too far RIGHT - repositioning camera")
+                                        if self._debug_log_counter % 5 == 0:  # More frequent logging
+                                            self.logger.info(f"[{self.attack_phase.upper()} TRACK] Santa at X={santa_cx} too far RIGHT - repositioning camera")
                                 else:
                                     # Santa is centered enough - release arrow keys
                                     if self.current_arrow_key is not None:
@@ -2405,6 +2425,11 @@ class SantaMacro:
                             
                             self.logger.info(f"[ATTACK START] Santa detected {self._consecutive_detections} times, starting attack now")
                             
+                            # Webhook: Attack started
+                            if self.webhook_manager:
+                                attack_mode = "custom" if (self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled()) else "standard"
+                                self.webhook_manager.attack_started(attack_mode)
+                            
                             # CRITICAL: Force-release all arrow keys using native Windows API
                             self._force_release_all_arrows()
                             self.logger.info(f"[CAMERA] Force-released all arrows - freezing for attack")
@@ -2485,6 +2510,12 @@ class SantaMacro:
                                 self.attack_phase = "cooldown"
                                 self.attack_phase_start = current_time
                                 self.logger.info("[MEGAPOW] Stage 2 complete -> Stage 3: COOLDOWN started (5.2s)")
+                                
+                                # Webhook: Attack completed
+                                if self.webhook_manager:
+                                    attack_mode = "custom" if (self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled()) else "standard"
+                                    duration = current_time - self.attack_phase_start if self.attack_phase_start else 0
+                                    self.webhook_manager.attack_completed(attack_mode, duration)
                             elif self._debug_log_counter % 25 == 0:
                                 mode_name = "CUSTOM"
                                 self.logger.info(f"[{mode_name}] Stage 2: FIRE ({phase_elapsed:.1f}s/{self._get_fire_duration()}s)")
@@ -2545,7 +2576,9 @@ class SantaMacro:
                                 if self._debug_log_counter % 10 == 0:
                                     self.logger.info(f"[COOLDOWN] Spamming E during grace period cooldown")
                             
-                            if self._predicted_position and frames_since_detection < 15:
+                            # Extended prediction window during attacks (especially for long custom sequences)
+                            prediction_window = 30 if self.attack_phase in ["load", "fire"] else 15
+                            if self._predicted_position and frames_since_detection < prediction_window:
                                 pred_x_roi, pred_y_roi = self._predicted_position
                                 pred_x = pred_x_roi + self.roi["left"]
                                 pred_y = pred_y_roi + self.roi["top"]

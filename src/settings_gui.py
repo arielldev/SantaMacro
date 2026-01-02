@@ -335,7 +335,7 @@ class SettingsGUI(QMainWindow):
     # Add a custom signal for F3 handling
     f3_pressed_signal = Signal()
     
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str, macro_instance=None):
         # Ensure we're in the main thread
         from PySide6.QtWidgets import QApplication
         from PySide6.QtCore import QThread
@@ -347,6 +347,7 @@ class SettingsGUI(QMainWindow):
         super().__init__()
         self.config_path = config_path
         self.config = {}
+        self.macro_instance = macro_instance  # Store reference to macro
         self.recorder = FullActionRecorder()
         self.recording_active = False
         self.f3_monitoring_ready = False  # Prevent F3 handling during startup
@@ -1388,6 +1389,15 @@ The update process creates a backup of your current installation before applying
         try:
             with open(self.config_path, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, indent=2)
+            
+            # Reload webhook config in macro if available
+            if self.macro_instance and hasattr(self.macro_instance, 'webhook_manager'):
+                if self.macro_instance.webhook_manager:
+                    # Reload the config from file
+                    with open(self.config_path, 'r', encoding='utf-8') as f:
+                        updated_config = json.load(f)
+                    self.macro_instance.webhook_manager.update_config(updated_config)
+                    print("✅ Webhook config reloaded in macro")
             
             QMessageBox.information(self, "Success", "✅ Settings saved successfully!\n\nYour attack sequence is ready to use!")
             self.close()

@@ -61,20 +61,20 @@ class OverlayQt:
         self.settings_callback = None
         
         if status_bar_mode:
-            # Compact status bar at top-center with settings button
+            # Normal GUI window at top-center with settings button
             screen = self.app.primaryScreen().geometry()
-            bar_width = 400  # Reduced width
+            bar_width = 400
             bar_height = 70   
             bar_x = (screen.width() - bar_width) // 2
             bar_y = 10
             
             self.widget = ClickableWidget()
             self.widget.set_overlay(self)
-            flags = Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint
+            # Normal window flags - has title bar and borders
+            flags = Qt.Window | Qt.WindowStaysOnTopHint
             self.widget.setWindowFlags(flags)
-            self.widget.setAttribute(Qt.WA_TranslucentBackground, True)
-            # Remove the ShowWithoutActivating attribute so it can receive clicks
-            # self.widget.setAttribute(Qt.WA_ShowWithoutActivating, True)
+            # No transparency - normal window background
+            # Remove: self.widget.setAttribute(Qt.WA_TranslucentBackground, True)
             self.widget.setGeometry(bar_x, bar_y, bar_width, bar_height)
             self.widget.setWindowTitle(self.title)
             self.label = QLabel(self.widget)
@@ -126,11 +126,12 @@ class OverlayQt:
 
     def update(self, frame_bgr: np.ndarray, status_text: Optional[str] = None, det_bbox: Optional[Tuple[int, int, int, int]] = None, aim_point: Optional[Tuple[int, int]] = None, roi_offset: Tuple[int, int] = (0, 0), attack_mode: str = "custom"):
         if self.status_bar_mode and status_text:
-            # Clean status bar with settings button
+            # Status bar for normal GUI window
             bar_width = 400
             bar_height = 70
             pixmap = QPixmap(bar_width, bar_height)
-            pixmap.fill(Qt.transparent)
+            # Fill with dark background instead of transparent
+            pixmap.fill(QColor(45, 20, 18, 255))  # Solid dark red background
             painter = QPainter(pixmap)
             painter.setRenderHint(QPainter.Antialiasing)
             painter.setRenderHint(QPainter.SmoothPixmapTransform)
