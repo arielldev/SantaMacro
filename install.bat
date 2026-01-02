@@ -159,35 +159,22 @@ if errorlevel 1 (
 )
 
 echo Installing pydirectinput...
-echo ^(Note: This package is Windows-only and requires proper dependencies^)
-python -m pip install pydirectinput==1.0.4 --no-deps --disable-pip-version-check --no-warn-script-location
+echo ^(Note: This package is Windows-only^)
+python -m pip install pydirectinput --disable-pip-version-check --no-warn-script-location
 if errorlevel 1 (
-    echo ✗ pydirectinput failed - trying alternative installation...
-    python -m pip install pydirectinput --disable-pip-version-check --no-warn-script-location
-    if errorlevel 1 (
-        echo ✗ pydirectinput failed completely
-        set FAILED_PACKAGES=!FAILED_PACKAGES! pydirectinput
-        set /a FAILED_COUNT+=1
-    ) else (
-        echo ✓ pydirectinput installed ^(alternative method^)
-    )
+    echo ✗ pydirectinput failed
+    set FAILED_PACKAGES=!FAILED_PACKAGES! pydirectinput
+    set /a FAILED_COUNT+=1
 ) else (
     echo ✓ pydirectinput installed
 )
 
-echo Installing pynput and dependencies...
-python -m pip install evdev six --disable-pip-version-check --no-warn-script-location 2>nul
-python -m pip install pynput==1.7.6 --disable-pip-version-check --no-warn-script-location
+echo Installing pynput...
+python -m pip install pynput --disable-pip-version-check --no-warn-script-location
 if errorlevel 1 (
-    echo ✗ pynput failed - trying alternative installation...
-    python -m pip install pynput --disable-pip-version-check --no-warn-script-location
-    if errorlevel 1 (
-        echo ✗ pynput failed completely
-        set FAILED_PACKAGES=!FAILED_PACKAGES! pynput
-        set /a FAILED_COUNT+=1
-    ) else (
-        echo ✓ pynput installed ^(alternative method^)
-    )
+    echo ✗ pynput failed
+    set FAILED_PACKAGES=!FAILED_PACKAGES! pynput
+    set /a FAILED_COUNT+=1
 ) else (
     echo ✓ pynput installed
 )
@@ -307,49 +294,55 @@ if errorlevel 1 (
 .venv\Scripts\python.exe -c "import pyautogui; print(f'pyautogui v{pyautogui.__version__}')" 2>nul
 if errorlevel 1 (
     echo ✗ pyautogui import failed
-    echo    Error details:
-    .venv\Scripts\python.exe -c "import pyautogui" 2>&1
-    echo.
     echo    Attempting fix...
     .venv\Scripts\python.exe -m pip install pyautogui --force-reinstall --no-cache-dir --disable-pip-version-check
-    .venv\Scripts\python.exe -c "import pyautogui; print(f'   ✓ Fixed! pyautogui v{pyautogui.__version__}')" 2>nul
+    .venv\Scripts\python.exe -c "import pyautogui" 2>err.tmp
     if errorlevel 1 (
-        echo    ✗ Still failing after reinstall
+        echo    ✗ Still failing - actual error:
+        type err.tmp
+        del err.tmp 2>nul
         set VERIFY_FAILED=1
+    ) else (
+        del err.tmp 2>nul
+        echo    ✓ Fixed! pyautogui working
     )
 ) else (
     echo ✓ pyautogui working
 )
 
-.venv\Scripts\python.exe -c "import pydirectinput; print(f'pydirectinput v{pydirectinput.__version__}')" 2>nul
+.venv\Scripts\python.exe -c "import pydirectinput" 2>nul
 if errorlevel 1 (
     echo ✗ pydirectinput import failed
-    echo    Error details:
-    .venv\Scripts\python.exe -c "import pydirectinput" 2>&1
-    echo.
     echo    Attempting fix...
     .venv\Scripts\python.exe -m pip install pydirectinput --force-reinstall --no-cache-dir --disable-pip-version-check
-    .venv\Scripts\python.exe -c "import pydirectinput; print(f'   ✓ Fixed! pydirectinput v{pydirectinput.__version__}')" 2>nul
+    .venv\Scripts\python.exe -c "import pydirectinput" 2>err.tmp
     if errorlevel 1 (
-        echo    ✗ Still failing after reinstall
+        echo    ✗ Still failing - actual error:
+        type err.tmp
+        del err.tmp 2>nul
         set VERIFY_FAILED=1
+    ) else (
+        del err.tmp 2>nul
+        echo    ✓ Fixed! pydirectinput working
     )
 ) else (
     echo ✓ pydirectinput working
 )
 
-.venv\Scripts\python.exe -c "import pynput; print(f'pynput v{pynput.__version__}')" 2>nul
+.venv\Scripts\python.exe -c "import pynput" 2>nul
 if errorlevel 1 (
     echo ✗ pynput import failed
-    echo    Error details:
-    .venv\Scripts\python.exe -c "import pynput" 2>&1
-    echo.
     echo    Attempting fix...
     .venv\Scripts\python.exe -m pip install pynput --force-reinstall --no-cache-dir --disable-pip-version-check
-    .venv\Scripts\python.exe -c "import pynput; print(f'   ✓ Fixed! pynput v{pynput.__version__}')" 2>nul
+    .venv\Scripts\python.exe -c "import pynput" 2>err.tmp
     if errorlevel 1 (
-        echo    ✗ Still failing after reinstall
+        echo    ✗ Still failing - actual error:
+        type err.tmp
+        del err.tmp 2>nul
         set VERIFY_FAILED=1
+    ) else (
+        del err.tmp 2>nul
+        echo    ✓ Fixed! pynput working
     )
 ) else (
     echo ✓ pynput working
