@@ -2174,8 +2174,15 @@ class SantaMacro:
                                 self._consecutive_detections = 0
                                 self.attack_phase = "load"
                                 self.attack_phase_start = current_time
-                                self.attack_committed = False
+                                self.attack_committed = False  # Reset for new attack cycle
                                 self.logger.info(f"[MEGAPOW] Cooldown complete (Santa at X={santa_cx}) -> Stage 1: LOAD started (1.0s)")
+                                
+                                # Start custom attack for the new cycle
+                                if self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled():
+                                    if not self.custom_attack_manager.player.playing:
+                                        self._send_attack_input(down=True)
+                                        self.attack_committed = True  # Mark that attack has been started
+                                        self.logger.info(f"[ATTACK INPUT] CUSTOM SEQUENCE RESTARTED (COOLDOWN->LOAD)")
                     
                     if best_santa:
                         x1, y1, x2, y2 = best_santa['box']
@@ -2436,8 +2443,15 @@ class SantaMacro:
                             
                             self.attack_phase = "load"
                             self.attack_phase_start = current_time
-                            self.attack_committed = False
+                            self.attack_committed = False  # Reset for this attack cycle
                             self.logger.info(f"[MEGAPOW] Stage 1: LOAD started (1.0s) - Santa detected!")
+                            
+                            # Start custom attack immediately when entering LOAD phase
+                            if self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled():
+                                if not self.custom_attack_manager.player.playing:
+                                    self._send_attack_input(down=True)
+                                    self.attack_committed = True  # Mark that attack has been started
+                                    self.logger.info(f"[ATTACK INPUT] CUSTOM SEQUENCE STARTED (LOAD)")
                         elif self.attack_phase == "cooldown":
                             if self.attack_phase_start is None:
                                 self.attack_phase_start = current_time
@@ -2452,23 +2466,19 @@ class SantaMacro:
                                 self.attack_phase_start = current_time
                             phase_elapsed = current_time - self.attack_phase_start
                             
-                            # For custom attacks, only start once, don't spam
-                            if self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled():
-                                if not self.custom_attack_manager.player.playing:
-                                    self._send_attack_input(down=True)
-                                    input_type = "CUSTOM SEQUENCE"
-                                    self.logger.info(f"[ATTACK INPUT] {input_type} STARTED (LOAD)")
-                            else:
+                            # For custom attacks, DON'T spam - already started when entering load phase
+                            # Only traditional attacks spam input
+                            if not (self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled()):
                                 # Traditional attack - spam input
                                 if not self._mouse_down and not self._x_key_down:
                                     self._send_attack_input(down=True)
-                                    input_type = "CUSTOM SEQUENCE"
+                                    input_type = "TRADITIONAL"
                                     self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (LOAD)")
                             
                             if phase_elapsed >= self._get_load_duration():
                                 self.attack_phase = "fire"
                                 self.attack_phase_start = current_time
-                                self.attack_committed = True
+                                # Note: don't reset attack_committed - custom attack is already running
                                 self._has_attacked_successfully = True
                                 self.logger.info("[MEGAPOW] Stage 1 complete -> Stage 2: FIRE started (5.0s)")
                             elif self._debug_log_counter % 25 == 0:
@@ -2547,10 +2557,16 @@ class SantaMacro:
                             frames_since_detection = 9999
                         
                         if frames_since_detection <= self._detection_grace_frames and self._last_detection_frame >= 0:
-                            if self.attack_phase in ["load", "fire"] and not self._mouse_down and not self._x_key_down:
-                                self._send_attack_input(down=True)
-                                input_type = "CUSTOM SEQUENCE"
-                                self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (GRACE PERIOD)")
+                            # For custom attacks, don't spam input during grace - sequence is already running
+                            # Only spam for traditional attacks
+                            if self.attack_phase in ["load", "fire"]:
+                                if not (self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled()):
+                                    # Traditional attack - keep spamming
+                                    if not self._mouse_down and not self._x_key_down:
+                                        self._send_attack_input(down=True)
+                                        input_type = "TRADITIONAL"
+                                        self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (GRACE PERIOD)")
+                                # For custom attacks, do nothing - sequence is already playing
                             
                             current_time = time.time()
                             if self.attack_phase_start is None:
