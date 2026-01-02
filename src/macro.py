@@ -2395,20 +2395,11 @@ class SantaMacro:
                             if self._debug_log_counter % 50 == 0:
                                 self.logger.info("[SEARCHING] Looking for Santa...")
                             
-                            # Grace period: continue tracking predicted position during attack
-                            if self.attack_phase == "attacking":
-                                # Continue with attack, don't search
-                                continue
-                            
+                            # IMPORTANT: Continue searching for Santa even during attack sequence!
+                            # The attack sequence will keep playing, but camera needs to find Santa
                             if self.search_state == "idle":
                                 # CRITICAL: Force-release ALL arrows before starting search
                                 self._force_release_all_arrows()
-                                self.logger.info("[SEARCH] Force-released all arrows before search")
-                                
-                                # DO NOT search during attack - must complete attack cycle first
-                                if self.attack_phase == "attacking":
-                                    self.logger.info(f"[SEARCH] Cannot search - attack in progress, waiting...")
-                                    continue  # Skip search, stay waiting for attack to complete
                                 
                                 self._last_santa_center = None
                                 self._detection_movement_history.clear()
@@ -2422,7 +2413,8 @@ class SantaMacro:
                                 
                                 # Always search left when Santa is lost
                                 self.search_state = "searching_left"
-                                self.logger.info(f"[SEARCH] Santa lost, searching left...")
+                                attack_status = " (DURING ATTACK)" if self.attack_phase == "attacking" else ""
+                                self.logger.info(f"[SEARCH] Santa lost{attack_status}, searching left...")
                                 
                                 # CRITICAL: Force-release all arrows before starting search
                                 self._force_release_all_arrows()
