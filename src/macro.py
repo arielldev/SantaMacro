@@ -914,7 +914,10 @@ class SantaMacro:
             if total_time > 0:
                 self._santa_profile.avg_speed = total_dist / total_time
         
-
+        # Extract color signature from Santa region
+        roi_x = max(0, x - self.roi["left"])
+        roi_y = max(0, y - self.roi["top"])
+        roi_x2 = min(frame_bgr.shape[1], roi_x + w)
         roi_y2 = min(frame_bgr.shape[0], roi_y + h)
         
         if roi_x2 > roi_x and roi_y2 > roi_y:
@@ -2114,76 +2117,6 @@ class SantaMacro:
                     
                     current_time = time.time()
                     
-                    if self.attack_phase == "cooldown" and best_santa:
-                        if self.attack_phase_start is None:
-                            self.attack_phase_start = current_time
-                        phase_elapsed = current_time - self.attack_phase_start
-                        if phase_elapsed >= self._get_cooldown_duration():
-                            # CRITICAL: Before restarting attack, validate Santa's position
-                            # If Santa is too far out of bounds, abort and search instead of looping forever
-                            x1, y1, x2, y2 = best_santa['box']
-                            w = x2 - x1
-                            santa_cx = x1 + w // 2
-                            
-                            # Check if Santa is within reasonable bounds for continuing attack
-                            # Use 20-80% range (vs 25-75% safe zone for starting attacks)
-                            # This gives some margin but prevents attacking way out of bounds targets
-                            abort_zone_left = int(self.roi["width"] * 0.20)
-                            abort_zone_right = int(self.roi["width"] * 0.80)
-                            
-                            if santa_cx < abort_zone_left or santa_cx > abort_zone_right:
-                                # Santa is way out of bounds - this might be a tree or Santa escaped
-                                # Abort the attack loop and search for proper target
-                                self.logger.info(f"[COOLDOWN END] Santa at X={santa_cx} outside acceptable range ({abort_zone_left}-{abort_zone_right}) - ABORTING attack loop")
-                                
-                                # Press '1' after E spam sequence ends (even when aborting)
-                                pydirectinput.press('1')
-                                self.logger.info("[COOLDOWN] Pressed '1' after E spam sequence (aborting)")
-                                
-                                self.attack_phase = "idle"
-                                self._consecutive_detections = 0
-                                self._detection_movement_history.clear()
-                                self._has_attacked_successfully = True  # Preserve attack state
-                                
-                                with self.arrow_lock:
-                                    if self.current_arrow_key is not None:
-                                        pydirectinput.keyUp(self.current_arrow_key)
-                                        with self.keys_lock:
-                                            self.camera_keys_pressed.discard(self.current_arrow_key)
-                                        self.current_arrow_key = None
-                                        self.is_holding_arrow = False
-                                
-                                # Force search to reposition camera
-                                self.search_state = "searching_left"
-                                self.logger.info("[COOLDOWN END] Forcing search to find better target position")
-                            else:
-                                # Santa is in acceptable position, continue attack cycle
-                                with self.arrow_lock:
-                                    if self.current_arrow_key is not None:
-                                        pydirectinput.keyUp(self.current_arrow_key)
-                                        with self.keys_lock:
-                                            self.camera_keys_pressed.discard(self.current_arrow_key)
-                                        self.current_arrow_key = None
-                                        self.is_holding_arrow = False
-                                
-                                # Press '1' after E spam sequence ends
-                                pydirectinput.press('1')
-                                self.logger.info("[COOLDOWN] Pressed '1' after E spam sequence")
-                                
-                                # Reset consecutive detections for the next attack cycle
-                                self._consecutive_detections = 0
-                                self.attack_phase = "load"
-                                self.attack_phase_start = current_time
-                                self.attack_committed = False  # Reset for new attack cycle
-                                self.logger.info(f"[MEGAPOW] Cooldown complete (Santa at X={santa_cx}) -> Stage 1: LOAD started (1.0s)")
-                                
-                                # Start custom attack for the new cycle
-                                if self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled():
-                                    if not self.custom_attack_manager.player.playing:
-                                        self._send_attack_input(down=True)
-                                        self.attack_committed = True  # Mark that attack has been started
-                                        self.logger.info(f"[ATTACK INPUT] CUSTOM SEQUENCE RESTARTED (COOLDOWN->LOAD)")
-                    
                     if best_santa:
                         x1, y1, x2, y2 = best_santa['box']
                         w = x2 - x1
@@ -2272,7 +2205,7 @@ class SantaMacro:
                         # Camera repositioning during attack (inspired by GPO Santa.py)
                         # CRITICAL: For long custom attacks, aggressively track Santa to prevent loss
                         # Must keep Santa in view even during 20+ second attack sequences
-                        if self.attack_phase in ["load", "fire"]:
+                        if self.attack_phase == "attacking":
                             # Check if Santa is in the danger zone (too far left or right)
                             # Use wider thresholds (10-90%) for more aggressive tracking during attacks
                             reposition_threshold_left = int(self.roi["width"] * 0.10)  # Left 10% - very aggressive
@@ -2316,54 +2249,6 @@ class SantaMacro:
                                         pydirectinput.keyUp(key_to_release)
                                         with self.keys_lock:
                                             self.camera_keys_pressed.discard(key_to_release)
-                                        self.current_arrow_key = None
-                                        self.is_holding_arrow = False
-                        
-                        elif self.attack_phase == "cooldown":
-                            # During cooldown, TRACK Santa with camera to keep them on screen
-                            # Determine which direction Santa is moving
-                            move_threshold = self.roi["width"] * 0.20  # More aggressive tracking during cooldown
-                            optimal_center = self.roi["width"] // 2
-                            offset_x = santa_cx - optimal_center
-                            
-                            should_move_left = offset_x < -move_threshold
-                            should_move_right = offset_x > move_threshold
-                            
-                            with self.arrow_lock:
-                                if should_move_left:
-                                    if self.current_arrow_key != 'left':
-                                        if self.current_arrow_key:
-                                            pydirectinput.keyUp(self.current_arrow_key)
-                                            with self.keys_lock:
-                                                self.camera_keys_pressed.discard(self.current_arrow_key)
-                                        pydirectinput.keyDown('left')
-                                        with self.keys_lock:
-                                            self.camera_keys_pressed.add('left')
-                                        self.current_arrow_key = 'left'
-                                        self.is_holding_arrow = True
-                                        self._camera_has_tracked = True  # Confirmed we're tracking Santa
-                                        if self._debug_log_counter % 10 == 0:
-                                            self.logger.info(f"[COOLDOWN] Following Santa LEFT (offset={offset_x:.0f})")
-                                elif should_move_right:
-                                    if self.current_arrow_key != 'right':
-                                        if self.current_arrow_key:
-                                            pydirectinput.keyUp(self.current_arrow_key)
-                                            with self.keys_lock:
-                                                self.camera_keys_pressed.discard(self.current_arrow_key)
-                                        pydirectinput.keyDown('right')
-                                        with self.keys_lock:
-                                            self.camera_keys_pressed.add('right')
-                                        self.current_arrow_key = 'right'
-                                        self.is_holding_arrow = True
-                                        self._camera_has_tracked = True  # Confirmed we're tracking Santa
-                                        if self._debug_log_counter % 10 == 0:
-                                            self.logger.info(f"[COOLDOWN] Following Santa RIGHT (offset={offset_x:.0f})")
-                                else:
-                                    # Santa is centered enough, stop moving
-                                    if self.current_arrow_key:
-                                        pydirectinput.keyUp(self.current_arrow_key)
-                                        with self.keys_lock:
-                                            self.camera_keys_pressed.discard(self.current_arrow_key)
                                         self.current_arrow_key = None
                                         self.is_holding_arrow = False
                         
@@ -2434,101 +2319,28 @@ class SantaMacro:
                             
                             # Webhook: Attack started
                             if self.webhook_manager:
-                                attack_mode = "custom" if (self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled()) else "standard"
-                                self.webhook_manager.attack_started(attack_mode)
+                                self.webhook_manager.attack_started("custom")
                             
-                            # CRITICAL: Force-release all arrow keys using native Windows API
-                            self._force_release_all_arrows()
-                            self.logger.info(f"[CAMERA] Force-released all arrows - freezing for attack")
-                            
-                            self.attack_phase = "load"
-                            self.attack_phase_start = current_time
-                            self.attack_committed = False  # Reset for this attack cycle
-                            self.logger.info(f"[MEGAPOW] Stage 1: LOAD started (1.0s) - Santa detected!")
-                            
-                            # Start custom attack immediately when entering LOAD phase
+                            # Start custom attack sequence with looping
                             if self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled():
                                 if not self.custom_attack_manager.player.playing:
-                                    self._send_attack_input(down=True)
-                                    self.attack_committed = True  # Mark that attack has been started
-                                    self.logger.info(f"[ATTACK INPUT] CUSTOM SEQUENCE STARTED (LOAD)")
-                        elif self.attack_phase == "cooldown":
-                            if self.attack_phase_start is None:
-                                self.attack_phase_start = current_time
-                            phase_elapsed = current_time - self.attack_phase_start
-                            
-                            pydirectinput.press('e')
-                            if self._debug_log_counter % 10 == 0:
-                                self.logger.info(f"[COOLDOWN] Spamming E during cooldown ({phase_elapsed:.1f}s/{self._get_cooldown_duration()}s)")
+                                    self.custom_attack_manager.play_custom_attack(loop=True)
+                                    self.attack_phase = "attacking"  # Simple state
+                                    self.attack_phase_start = current_time
+                                    self.logger.info("[CUSTOM ATTACK] Started looping custom attack sequence")
+                        elif self.attack_phase == "attacking":
+                            # Custom attack is running - just keep tracking Santa
+                            # The custom attack player handles everything: sequence -> E spam -> loop
+                            # Check if player has stopped (user abort or error)
+                            if not self.custom_attack_manager.player.playing:
+                                # Player finished (stopped by user or error)
+                                self.attack_phase = "idle"
+                                self._consecutive_detections = 0
+                                self.logger.info("[CUSTOM ATTACK] Player stopped - returning to idle")
+                            elif self._debug_log_counter % 50 == 0:
+                                self.logger.info("[ATTACKING] Custom attack sequence running, tracking Santa...")
                         
-                        if self.attack_phase == "load":
-                            if self.attack_phase_start is None:
-                                self.attack_phase_start = current_time
-                            phase_elapsed = current_time - self.attack_phase_start
-                            
-                            # For custom attacks, DON'T spam - already started when entering load phase
-                            # Only traditional attacks spam input
-                            if not (self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled()):
-                                # Traditional attack - spam input
-                                if not self._mouse_down and not self._x_key_down:
-                                    self._send_attack_input(down=True)
-                                    input_type = "TRADITIONAL"
-                                    self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (LOAD)")
-                            
-                            if phase_elapsed >= self._get_load_duration():
-                                self.attack_phase = "fire"
-                                self.attack_phase_start = current_time
-                                # Note: don't reset attack_committed - custom attack is already running
-                                self._has_attacked_successfully = True
-                                self.logger.info("[MEGAPOW] Stage 1 complete -> Stage 2: FIRE started (5.0s)")
-                            elif self._debug_log_counter % 25 == 0:
-                                mode_name = "CUSTOM"
-                                self.logger.info(f"[{mode_name}] Stage 1: LOAD ({phase_elapsed:.1f}s/{self._get_load_duration()}s)")
-                        
-                        elif self.attack_phase == "fire":
-                            if self.attack_phase_start is None:
-                                self.attack_phase_start = current_time
-                            phase_elapsed = current_time - self.attack_phase_start
-                            
-                            # For custom attacks, don't spam input - let custom sequence handle it
-                            if self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled():
-                                # Custom attack is already running, don't interfere
-                                pass
-                            else:
-                                # Traditional attack - spam input
-                                if not self._mouse_down and not self._x_key_down:
-                                    self._send_attack_input(down=True)
-                                    input_type = "CUSTOM SEQUENCE"
-                                    self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (FIRE)")
-                            
-                            if phase_elapsed >= self._get_fire_duration():
-                                # Stop custom attack or traditional attack
-                                if self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled():
-                                    if self.custom_attack_manager.player.playing:
-                                        self.custom_attack_manager.stop_attack()
-                                        self.logger.info("[CUSTOM ATTACK] Fire phase complete - stopped custom sequence")
-                                else:
-                                    if self._mouse_down or self._x_key_down:
-                                        self._send_attack_input(down=False)
-                                        input_type = "CUSTOM SEQUENCE"
-                                        self.logger.info(f"[ATTACK INPUT] {input_type} UP (FIRE COMPLETE)")
-                                
-                                # Press '1' before starting E spam sequence
-                                pydirectinput.press('1')
-                                self.logger.info("[COOLDOWN] Pressed '1' before E spam sequence")
-                                
-                                self.attack_phase = "cooldown"
-                                self.attack_phase_start = current_time
-                                self.logger.info("[MEGAPOW] Stage 2 complete -> Stage 3: COOLDOWN started (5.2s)")
-                                
-                                # Webhook: Attack completed
-                                if self.webhook_manager:
-                                    attack_mode = "custom" if (self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled()) else "standard"
-                                    duration = current_time - self.attack_phase_start if self.attack_phase_start else 0
-                                    self.webhook_manager.attack_completed(attack_mode, duration)
-                            elif self._debug_log_counter % 25 == 0:
-                                mode_name = "CUSTOM"
-                                self.logger.info(f"[{mode_name}] Stage 2: FIRE ({phase_elapsed:.1f}s/{self._get_fire_duration()}s)")
+                        # No more LOAD/FIRE/COOLDOWN phases - custom attack handles everything
                         
                         if self.overlay_enabled:
                             self._update_fps()
@@ -2557,43 +2369,11 @@ class SantaMacro:
                             frames_since_detection = 9999
                         
                         if frames_since_detection <= self._detection_grace_frames and self._last_detection_frame >= 0:
-                            # For custom attacks, don't spam input during grace - sequence is already running
-                            # Only spam for traditional attacks
-                            if self.attack_phase in ["load", "fire"]:
-                                if not (self.custom_attack_manager and self.custom_attack_manager.is_custom_enabled()):
-                                    # Traditional attack - keep spamming
-                                    if not self._mouse_down and not self._x_key_down:
-                                        self._send_attack_input(down=True)
-                                        input_type = "TRADITIONAL"
-                                        self.logger.info(f"[ATTACK INPUT] {input_type} DOWN (GRACE PERIOD)")
-                                # For custom attacks, do nothing - sequence is already playing
+                            # Custom attack is running - no special handling needed during grace period
+                            # Just track predicted position if available
                             
-                            current_time = time.time()
-                            if self.attack_phase_start is None:
-                                self.attack_phase_start = current_time
-                            phase_elapsed = current_time - self.attack_phase_start
-                            
-                            if self.attack_phase == "fire" and phase_elapsed >= self._get_fire_duration():
-                                if self._mouse_down or self._x_key_down:
-                                    self._send_attack_input(down=False)
-                                    input_type = "CUSTOM SEQUENCE"
-                                    self.logger.info(f"[ATTACK INPUT] {input_type} UP (GRACE FIRE COMPLETE)")
-                                
-                                # Press '1' before starting E spam sequence
-                                pydirectinput.press('1')
-                                self.logger.info("[COOLDOWN] Pressed '1' before E spam sequence")
-                                
-                                self.attack_phase = "cooldown"
-                                self.attack_phase_start = current_time
-                                mode_name = "CUSTOM"
-                                self.logger.info(f"[{mode_name}] Stage 2 complete (grace) -> Stage 3: COOLDOWN")
-                            elif self.attack_phase == "cooldown":
-                                pydirectinput.press('e')
-                                if self._debug_log_counter % 10 == 0:
-                                    self.logger.info(f"[COOLDOWN] Spamming E during grace period cooldown")
-                            
-                            # Extended prediction window during attacks (especially for long custom sequences)
-                            prediction_window = 30 if self.attack_phase in ["load", "fire"] else 15
+                            # Extended prediction window during attacks
+                            prediction_window = 30 if self.attack_phase == "attacking" else 15
                             if self._predicted_position and frames_since_detection < prediction_window:
                                 pred_x_roi, pred_y_roi = self._predicted_position
                                 pred_x = pred_x_roi + self.roi["left"]
@@ -2615,64 +2395,19 @@ class SantaMacro:
                             if self._debug_log_counter % 50 == 0:
                                 self.logger.info("[SEARCHING] Looking for Santa...")
                             
-                            # Don't abort attack if we're in FIRE or LOAD phase - keep going!
-                            # Santa might reappear, and we need to complete the cycle regardless
-                            if self.attack_phase in ["load", "fire"]:
-                                # Check if fire duration is complete
-                                if self.attack_phase == "fire":
-                                    phase_elapsed = time.time() - self.attack_phase_start
-                                    if phase_elapsed >= self._get_fire_duration():
-                                        # Fire complete, go to cooldown
-                                        if self._mouse_down or self._x_key_down:
-                                            self._send_attack_input(down=False)
-                                            input_type = "CUSTOM SEQUENCE"
-                                            self.logger.info(f"[FIRE COMPLETE] {input_type} UP (no visual)")
-                                        
-                                        # Press '1' before starting E spam sequence
-                                        pydirectinput.press('1')
-                                        self.logger.info("[COOLDOWN] Pressed '1' before E spam sequence")
-                                        
-                                        self.attack_phase = "cooldown"
-                                        self.attack_phase_start = time.time()
-                                        self.attack_committed = True
-                                        self._has_attacked_successfully = True
-                                        mode_name = "CUSTOM"
-                                        self.logger.info(f"[{mode_name}] Fire complete (lost visual) -> Starting COOLDOWN")
-                                    else:
-                                        # Keep firing even without visual
-                                        if not self._mouse_down and not self._x_key_down:
-                                            self._send_attack_input(down=True)
+                            # Grace period: continue tracking predicted position during attack
+                            if self.attack_phase == "attacking":
                                 # Continue with attack, don't search
                                 continue
-                            
-                            # Legacy mouse_down handling (should not reach here)
-                            if self._mouse_down and self.attack_phase != "cooldown":
-                                self._send_mouse_click(down=False)
-                                self._mouse_down = False
-                                pydirectinput.press('1')
-                                self.attack_phase = "cooldown"
-                                self.attack_phase_start = time.time()
-                                self.attack_committed = True
-                                self._has_attacked_successfully = True
-                                self.logger.info("[COOLDOWN] Starting cooldown cycle after losing Santa")
-                                
-                                self.last_kill_time = time.time()
-                                self.logger.info("[LOOT] Starting E spam sequence...")
-                            
-                            time_since_kill = time.time() - self.last_kill_time
-                            if time_since_kill < self.e_spam_duration:
-                                pydirectinput.press('e')
-                                if self._debug_log_counter % 10 == 0:
-                                    self.logger.info(f"[LOOT] Spamming E ({time_since_kill:.1f}s/{self.e_spam_duration}s)")
                             
                             if self.search_state == "idle":
                                 # CRITICAL: Force-release ALL arrows before starting search
                                 self._force_release_all_arrows()
                                 self.logger.info("[SEARCH] Force-released all arrows before search")
                                 
-                                # DO NOT search during any attack phase - must complete attack cycle first
-                                if self.attack_phase in ["load", "fire", "cooldown"]:
-                                    self.logger.info(f"[SEARCH] Cannot search - {self.attack_phase} in progress, waiting...")
+                                # DO NOT search during attack - must complete attack cycle first
+                                if self.attack_phase == "attacking":
+                                    self.logger.info(f"[SEARCH] Cannot search - attack in progress, waiting...")
                                     continue  # Skip search, stay waiting for attack to complete
                                 
                                 self._last_santa_center = None
