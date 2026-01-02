@@ -89,7 +89,7 @@ echo ✓ Virtual environment activated
 
 echo.
 echo [4/5] Upgrading pip...
-python -m pip install --upgrade pip >nul 2>&1
+python -m pip install --upgrade pip --quiet
 if errorlevel 1 (
     echo WARNING: Could not upgrade pip, continuing anyway...
 ) else (
@@ -101,12 +101,14 @@ echo [5/5] Installing required packages...
 echo Installing packages individually...
 echo This may take several minutes...
 echo.
+echo NOTE: If you see errors, don't worry - we'll verify at the end.
+echo.
 
 set FAILED_PACKAGES=
 set FAILED_COUNT=0
 
 echo Installing mss...
-python -m pip install mss==9.0.1 >nul 2>&1
+python -m pip install mss==9.0.1 --disable-pip-version-check --no-warn-script-location
 if errorlevel 1 (
     echo ✗ mss failed
     set FAILED_PACKAGES=!FAILED_PACKAGES! mss
@@ -116,7 +118,7 @@ if errorlevel 1 (
 )
 
 echo Installing numpy...
-python -m pip install numpy==2.1.3 >nul 2>&1
+python -m pip install numpy==2.1.3 --disable-pip-version-check --no-warn-script-location
 if errorlevel 1 (
     echo ✗ numpy failed
     set FAILED_PACKAGES=!FAILED_PACKAGES! numpy
@@ -126,7 +128,7 @@ if errorlevel 1 (
 )
 
 echo Installing opencv-python...
-python -m pip install opencv-python==4.10.0.84 >nul 2>&1
+python -m pip install opencv-python==4.10.0.84 --disable-pip-version-check --no-warn-script-location
 if errorlevel 1 (
     echo ✗ opencv-python failed
     set FAILED_PACKAGES=!FAILED_PACKAGES! opencv-python
@@ -136,7 +138,7 @@ if errorlevel 1 (
 )
 
 echo Installing Pillow...
-python -m pip install Pillow==11.0.0 >nul 2>&1
+python -m pip install Pillow==11.0.0 --disable-pip-version-check --no-warn-script-location
 if errorlevel 1 (
     echo ✗ Pillow failed
     set FAILED_PACKAGES=!FAILED_PACKAGES! Pillow
@@ -146,7 +148,7 @@ if errorlevel 1 (
 )
 
 echo Installing pyautogui...
-python -m pip install pyautogui==0.9.54 >nul 2>&1
+python -m pip install pyautogui==0.9.54 --disable-pip-version-check --no-warn-script-location
 if errorlevel 1 (
     echo ✗ pyautogui failed
     set FAILED_PACKAGES=!FAILED_PACKAGES! pyautogui
@@ -156,7 +158,7 @@ if errorlevel 1 (
 )
 
 echo Installing pydirectinput...
-python -m pip install pydirectinput==1.0.4 >nul 2>&1
+python -m pip install pydirectinput==1.0.4 --disable-pip-version-check --no-warn-script-location
 if errorlevel 1 (
     echo ✗ pydirectinput failed
     set FAILED_PACKAGES=!FAILED_PACKAGES! pydirectinput
@@ -166,7 +168,7 @@ if errorlevel 1 (
 )
 
 echo Installing pynput...
-python -m pip install pynput==1.7.6 >nul 2>&1
+python -m pip install pynput==1.7.6 --disable-pip-version-check --no-warn-script-location
 if errorlevel 1 (
     echo ✗ pynput failed
     set FAILED_PACKAGES=!FAILED_PACKAGES! pynput
@@ -176,7 +178,7 @@ if errorlevel 1 (
 )
 
 echo Installing PySide6...
-python -m pip install "PySide6>=6.8.0" >nul 2>&1
+python -m pip install "PySide6>=6.8.0" --disable-pip-version-check --no-warn-script-location
 if errorlevel 1 (
     echo ✗ PySide6 failed
     set FAILED_PACKAGES=!FAILED_PACKAGES! PySide6
@@ -186,7 +188,7 @@ if errorlevel 1 (
 )
 
 echo Installing requests ^(for Discord webhooks^)...
-python -m pip install requests >nul 2>&1
+python -m pip install requests --disable-pip-version-check --no-warn-script-location
 if errorlevel 1 (
     echo ✗ requests failed
     set FAILED_PACKAGES=!FAILED_PACKAGES! requests
@@ -196,7 +198,7 @@ if errorlevel 1 (
 )
 
 echo Installing ultralytics ^(YOLOv8 - this may take a while^)...
-python -m pip install ultralytics >nul 2>&1
+python -m pip install ultralytics --disable-pip-version-check --no-warn-script-location
 if errorlevel 1 (
     echo ✗ ultralytics failed
     set FAILED_PACKAGES=!FAILED_PACKAGES! ultralytics
@@ -215,93 +217,97 @@ if !FAILED_COUNT! GTR 0 (
     echo 1. Make sure you're using Python 3.12 or 3.13 ^(NOT 3.14+^)
     echo 2. Try running install.bat as Administrator
     echo 3. Check your internet connection
-    echo 4. Install manually: python -m pip install [package_name]
+    echo 4. Install manually with: .venv\Scripts\python.exe -m pip install [package_name]
     echo.
+    echo IMPORTANT: Do not close this window - scroll up to see actual error messages!
+    echo.
+    pause
 ) else (
     echo ✓ All packages installed successfully!
 )
 
 echo.
-echo [Verification] Testing package imports...
-echo Checking core modules...
+echo [Verification] Testing package imports in virtual environment...
+echo This tests if packages work correctly in your venv...
+echo.
 
 set VERIFY_FAILED=0
 
-python -c "import mss" 2>nul
+.venv\Scripts\python.exe -c "import mss; print(f'mss v{mss.__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ mss import failed
+    echo ✗ mss import failed - Package not properly installed in venv
     set VERIFY_FAILED=1
 ) else (
     echo ✓ mss working
 )
 
-python -c "import numpy" 2>nul
+.venv\Scripts\python.exe -c "import numpy; print(f'numpy v{numpy.__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ numpy import failed
+    echo ✗ numpy import failed - Package not properly installed in venv
     set VERIFY_FAILED=1
 ) else (
     echo ✓ numpy working
 )
 
-python -c "import cv2" 2>nul
+.venv\Scripts\python.exe -c "import cv2; print(f'opencv v{cv2.__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ opencv-python import failed
+    echo ✗ opencv-python import failed - Package not properly installed in venv
     set VERIFY_FAILED=1
 ) else (
     echo ✓ opencv-python working
 )
 
-python -c "import PIL" 2>nul
+.venv\Scripts\python.exe -c "import PIL; print(f'Pillow v{PIL.__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ Pillow import failed
+    echo ✗ Pillow import failed - Package not properly installed in venv
     set VERIFY_FAILED=1
 ) else (
     echo ✓ Pillow working
 )
 
-python -c "import pyautogui" 2>nul
+.venv\Scripts\python.exe -c "import pyautogui; print(f'pyautogui v{pyautogui.__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ pyautogui import failed
+    echo ✗ pyautogui import failed - Package not properly installed in venv
     set VERIFY_FAILED=1
 ) else (
     echo ✓ pyautogui working
 )
 
-python -c "import pydirectinput" 2>nul
+.venv\Scripts\python.exe -c "import pydirectinput; print(f'pydirectinput v{pydirectinput.__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ pydirectinput import failed
+    echo ✗ pydirectinput import failed - Package not properly installed in venv
     set VERIFY_FAILED=1
 ) else (
     echo ✓ pydirectinput working
 )
 
-python -c "import pynput" 2>nul
+.venv\Scripts\python.exe -c "import pynput; print(f'pynput v{pynput.__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ pynput import failed
+    echo ✗ pynput import failed - Package not properly installed in venv
     set VERIFY_FAILED=1
 ) else (
     echo ✓ pynput working
 )
 
-python -c "from PySide6.QtWidgets import QApplication" 2>nul
+.venv\Scripts\python.exe -c "from PySide6 import __version__; print(f'PySide6 v{__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ PySide6 import failed
+    echo ✗ PySide6 import failed - Package not properly installed in venv
     set VERIFY_FAILED=1
 ) else (
     echo ✓ PySide6 working
 )
 
-python -c "import requests" 2>nul
+.venv\Scripts\python.exe -c "import requests; print(f'requests v{requests.__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ requests import failed
+    echo ✗ requests import failed - Package not properly installed in venv
     set VERIFY_FAILED=1
 ) else (
     echo ✓ requests working
 )
 
-python -c "from ultralytics import YOLO" 2>nul
+.venv\Scripts\python.exe -c "from ultralytics import __version__; print(f'ultralytics v{__version__}')" 2>nul
 if errorlevel 1 (
-    echo ✗ ultralytics import failed
+    echo ✗ ultralytics import failed - Package not properly installed in venv
     set VERIFY_FAILED=1
 ) else (
     echo ✓ ultralytics working
@@ -313,18 +319,28 @@ if !VERIFY_FAILED! EQU 1 (
     echo   ⚠️ INSTALLATION INCOMPLETE!
     echo ========================================
     echo.
-    echo Some packages failed to install or import.
-    echo SantaMacro will NOT work properly!
+    echo Some packages failed to install or import properly.
+    echo SantaMacro will NOT work correctly!
     echo.
-    echo Please:
-    echo 1. Run install.bat again as Administrator
-    echo 2. Check you're using Python 3.12 or 3.13
-    echo 3. Ask for help in Discord if issues persist
+    echo CRITICAL: Scroll up in this window to see the actual error messages!
     echo.
+    echo Common fixes:
+    echo 1. Delete the .venv folder and run install.bat again
+    echo 2. Run install.bat as Administrator ^(right-click ^> Run as administrator^)
+    echo 3. Make sure you're using Python 3.12 or 3.13 ^(not 3.14+^)
+    echo 4. Check your internet connection
+    echo 5. Try manually: .venv\Scripts\python.exe -m pip install -r requirements.txt
+    echo.
+    echo If still failing, save this window output and ask for help in Discord!
+    echo.
+    pause
+    exit /b 1
 ) else (
     echo ========================================
     echo   ✓ ALL PACKAGES VERIFIED!
     echo ========================================
+    echo.
+    echo All packages installed and working correctly in your virtual environment.
 )
 
 echo.
