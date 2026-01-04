@@ -513,34 +513,59 @@ class SettingsGUI(QMainWindow):
                 duration_widget.selectAll()  # Select all so user can type immediately
     
     def start_key_capture(self, line_edit):
-        """Start capturing a key press"""
-        line_edit.setText("Press any key...")
+        """Start capturing a key or mouse button press"""
+        line_edit.setText("Press key or click mouse...")
         line_edit.setStyleSheet("padding: 4px; background-color: #fffacd; font-weight: bold;")
         
-        # Store the line_edit so we can update it in the key event
+        # Store the line_edit so we can update it in the event
         self._capturing_key_for = line_edit
         
-        # Install event filter to capture next key press
+        # Install event filters to capture both keyboard and mouse
         self.installEventFilter(self)
+        line_edit.installEventFilter(self)
     
     def eventFilter(self, obj, event):
-        """Filter events to capture key presses"""
+        """Filter events to capture key presses and mouse clicks"""
         from PySide6.QtCore import QEvent
-        from PySide6.QtGui import QKeyEvent
+        from PySide6.QtGui import QKeyEvent, QMouseEvent
         
-        if hasattr(self, '_capturing_key_for') and event.type() == QEvent.KeyPress:
-            key_event = event
-            key = key_event.key()
+        if hasattr(self, '_capturing_key_for'):
+            # Capture keyboard keys
+            if event.type() == QEvent.KeyPress:
+                key_event = event
+                key = key_event.key()
+                
+                # Map Qt key codes to readable key names
+                key_name = self.qt_key_to_string(key)
+                
+                if key_name:
+                    self._capturing_key_for.setText(key_name)
+                    self._capturing_key_for.setStyleSheet("padding: 4px;")
+                    self._capturing_key_for.removeEventFilter(self)
+                    delattr(self, '_capturing_key_for')
+                    self.removeEventFilter(self)
+                    return True
             
-            # Map Qt key codes to readable key names
-            key_name = self.qt_key_to_string(key)
-            
-            if key_name:
-                self._capturing_key_for.setText(key_name)
-                self._capturing_key_for.setStyleSheet("padding: 4px;")
-                delattr(self, '_capturing_key_for')
-                self.removeEventFilter(self)
-                return True
+            # Capture mouse buttons
+            elif event.type() == QEvent.MouseButtonPress:
+                mouse_event = event
+                button = mouse_event.button()
+                
+                from PySide6.QtCore import Qt
+                button_names = {
+                    Qt.MouseButton.LeftButton: "left",
+                    Qt.MouseButton.RightButton: "right",
+                    Qt.MouseButton.MiddleButton: "middle"
+                }
+                
+                button_name = button_names.get(button)
+                if button_name:
+                    self._capturing_key_for.setText(button_name)
+                    self._capturing_key_for.setStyleSheet("padding: 4px;")
+                    self._capturing_key_for.removeEventFilter(self)
+                    delattr(self, '_capturing_key_for')
+                    self.removeEventFilter(self)
+                    return True
         
         return super().eventFilter(obj, event)
     
